@@ -16,7 +16,7 @@ This project is a **Flight Data Logger** designed for UAVs and model aircrafts. 
 
 | Component                  | Description |
 |---------------------------|-------------|
-| **Arduino**               | Primary microcontroller (Nano Blender 33 Sense REV2) |
+| **Arduino**               | Primary microcontroller (Nano Ble 33 Sense REV2) |
 | **BMI270_BMM150**         | 9-DOF IMU (acceleration, gyroscope, magnetometer) |
 | **LPS22HB**               | Barometric pressure sensor |
 | **TinyGPS++**             | GPS data parser |
@@ -29,7 +29,7 @@ This project is a **Flight Data Logger** designed for UAVs and model aircrafts. 
 ## 🔧 Circuit Diagram
 
 > ⚠️ **WIRING DIAGRAM PLACEHOLDER**  
-> _(Add your wiring diagram image here, e.g., `![Wiring Diagram](images/wiring.png)`)_
+>  **Wiring Diagram not finished yet**
 
 ---
 
@@ -37,7 +37,7 @@ This project is a **Flight Data Logger** designed for UAVs and model aircrafts. 
 
 To safely read battery voltage levels using the Arduino's 3.3V ADC pin, use the following voltage divider:
 
-- **Input Voltage**: Up to 4.2V (LiPo 1S max)
+- **Input Voltage**: Up to 4V (LiPo 1S max)
 - **Divider Resistors**:
   - R1: **1.8kΩ**
   - R2: **380Ω**
@@ -110,7 +110,7 @@ The OLED shows system status:
 
 ## 👨‍💻 Credits
 
-- Developed by **Neus Fliegen IT Team**
+- Developed by **Neus Fliegen Avionics Team**
 - Based on libraries by Arduino, Adafruit, and Mikal Hart (TinyGPS++)
 
 ---
