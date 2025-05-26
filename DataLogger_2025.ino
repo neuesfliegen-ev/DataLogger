@@ -38,8 +38,7 @@ void readNextLineFromSD();
 
 void setup() {
   Serial.begin(115200);    // USB serial for debug
-
-
+  
   // OLED Init
   u8g2.begin();
   displayTwoLines("OLED", "initialized!", u8g2_font_ncenB10_tr);
@@ -48,9 +47,9 @@ void setup() {
   // GPS module on Serial1 (D0 = RX, D1 = TX)
   //Serial.println("🔍 Starting GPS reader ..."); 
   displayTwoLines("Starting GPS", "reader ...", u8g2_font_ncenB10_tr);
+  delay(2000);
   Serial1.begin(115200); 
   while (!Serial1);
-  delay(2000);
   displayTwoLines("GPS Started", "successfully!", u8g2_font_ncenB10_tr);
   delay(2000);
 
@@ -258,11 +257,6 @@ void updateGPSData() {
     Serial.print("Speed (km/h): "); Serial.println(Speed);
     Serial.print("Altitude (m): "); Serial.println(gpsAltitude);
     Serial.println("----------------------");
+    }
   }
-
 }
-}
-
-//float latitude, longitude, gpsAltitude, Speed, SatCount = 0.0;
-
-
