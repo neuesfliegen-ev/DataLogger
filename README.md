@@ -10,6 +10,7 @@ This project is a **Flight Data Logger** designed for UAVs and model aircrafts. 
   - Barometric pressure, altitude, and temperature
   - GPS coordinates, altitude, speed, and satellite count
 - OLED display for live status updates
+- Live telemetry Using 3G SIM card
 - Modular and extensible design for future sensor integration
 
 ## 🧠 Core Components
