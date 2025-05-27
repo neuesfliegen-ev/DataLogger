@@ -74,7 +74,7 @@ Example row:
 ### 🔌 Wiring
 
 - Connect sensors and modules via I2C/SPI/Serial as per the diagram.
-- Ensure GPS is connected to `Serial1` (typically `D0`/`D1` on Arduino). (IMPORTANT)
+- Ensure GPS is connected to `Serial1` (typically `TX`/`RX` on Arduino). (IMPORTANT)
 - Insert a formatted **FAT32 SD card**.
 
 ### 🧪 Uploading
@@ -95,6 +95,7 @@ The OLED shows system status:
 - Sensor initialization
 - GPS satellites count
 - Errors during SD or sensor setup
+- Team number
 
 > To keep the display clear and reduce power, update messages are brief and limited to startup and GPS updates.
 
