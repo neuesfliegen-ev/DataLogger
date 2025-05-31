@@ -50,6 +50,7 @@ Vout = Vin × (1 - (R2 / (R1 + R2))
 
 
 This protects your ADC pin from overvoltage.
+(WARNING) If 3.3V is the maximum rating of the Analog pins we might need to be well below it to ensure safety. This doesn't affect the reading of the battery's voltage, as it is a matter of calculations.
 
 ---
 
