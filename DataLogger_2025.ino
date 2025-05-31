@@ -30,13 +30,18 @@ float accX, accY, accZ;
 float gyroX, gyroY, gyroZ;
 float magX, magY, magZ;
 float latitude, longitude, gpsAltitude, Speed = 0.0;  //&speed in km/h
-int SatCount = 0;
-float pressure, paltitude, temperature;
+int SatCount = 0; 
+float pressure, paltitude, temperature; 
 float roll, pitch, yaw = 0.0;
+float batteryLevel = 0.0;
+
+// === Display Variables ===
+unsigned long lastDisplaySwitch = 0; // Keep track of the last time the display was updated
+int displayState = 0;                // Keep track of what to show: 0 = team, 1 = battery, 2 = satellites
 
 // === Function Declarations ===
 void displayToScreen(const char str[], u8g2_uint_t x, u8g2_uint_t y);
-void displayTwoLines(const char line1[], const char line2[], const uint8_t* font);
+void displayTwoLines(const char line1[], const char line2[], const uint8_t* font, u8g2_uint_t x1, u8g2_uint_t x2);
 void updateIMUData();
 void updateBarometerData();
 void logToSD();
@@ -44,61 +49,59 @@ void readNextLineFromSD();
 
 void setup() {
   Serial.begin(115200);    // USB serial for debug
-  
+
   // OLED Init
   u8g2.begin();
-  displayTwoLines("OLED", "initialized!", u8g2_font_ncenB10_tr);
+  displayTwoLines("OLED", "initialized!", u8g2_font_ncenB10_tr, 40, 25);
   delay(2000);
 
   // GPS module on Serial1 (D0 = RX, D1 = TX)
   //Serial.println("🔍 Starting GPS reader ..."); 
-  displayTwoLines("Starting GPS", "reader ...", u8g2_font_ncenB10_tr);
-  delay(2000);
+  displayTwoLines("Initializing", "GPS reader...", u8g2_font_ncenB10_tr, 25, 15);
   Serial1.begin(115200); 
   while (!Serial1);
-  displayTwoLines("GPS Started", "successfully!", u8g2_font_ncenB10_tr);
   delay(2000);
-
+  displayTwoLines("GPS started", "successfully!", u8g2_font_ncenB10_tr, 21, 20);
+  delay(2000);
 
   // IMU Init (Rev2)
-  displayTwoLines("Initializing", "IMU!", u8g2_font_ncenB10_tr);
+  displayTwoLines("Initializing", "IMU...", u8g2_font_ncenB10_tr, 25, 45);
   delay(2000);
   if (!IMU.begin()) {
-    Serial.println("Failed to initialize IMU!");
-    displayTwoLines("Failed to", "ininitialize IMU!", u8g2_font_ncenB10_tr);
+    Serial.println("Failed to initialize IMU.");
+    displayTwoLines("Failed to", "initialize IMU.", u8g2_font_ncenB10_tr, 35, 10);
     while (1);
   }
   Serial.println("IMU initialized successfully!");
-  displayTwoLines("IMU initialized", "successfully!", u8g2_font_ncenB10_tr);
+  displayTwoLines("IMU initialized", "successfully!", u8g2_font_ncenB10_tr, 10, 20);
   delay(2000);
 
-
-  displayTwoLines("Initializing", "BARO sensor", u8g2_font_ncenB10_tr);
+  displayTwoLines("Initializing", "BARO sensor...", u8g2_font_ncenB10_tr, 25, 10);
   delay(2000);
   if (!BARO.begin()) {
-      Serial.println("Failed to initialize pressure sensor!");
-      displayTwoLines("Failed to initialize", "pressure sensor!", u8g2_font_ncenB10_tr);
+      Serial.println("Failed to initialize pressure sensor.");
+      displayTwoLines("Failed to initialize", "pressure sensor.", u8g2_font_6x10_tr, 5, 20);
       while (1);
   }
-  Serial.println("BARO sensor initialized.");
-  displayTwoLines("BARO sensor", "initialized.",u8g2_font_ncenB10_tr);
+  Serial.println("BARO sensor initialized!");
+  displayTwoLines("BARO sensor", "initialized!", u8g2_font_ncenB10_tr, 15, 25);
   delay(2000);
 
   // SD Init
-  displayTwoLines("BARO sensor", "initialized.", u8g2_font_ncenB10_tr);
+  displayTwoLines("BARO sensor", "initialized!", u8g2_font_ncenB10_tr, 15, 25);
   delay(2000);
   if (!SD.begin(chipSelect)) {
-    Serial.println("SD card initialization failed!");
-    displayTwoLines("SD card", "initialization failed!", u8g2_font_6x10_tr);
+    Serial.println("Failed to initialize SD card.");
+    displayTwoLines("Failed to ini-", "tialize SD card.", u8g2_font_6x10_tr, 25, 20);
     while (1);
   }
   Serial.println("SD card initialized successfully!");
-  displayTwoLines("SD card initialized", "successfully!", u8g2_font_6x10_tr);
+  displayTwoLines("SD card initialized", "successfully!", u8g2_font_6x10_tr, 8, 25);
   delay(2000);
 
-  displayToScreen("Ready to start", 0, 35);
+  displayTwoLines("Ready to", "start!", u8g2_font_ncenB10_tr, 35, 45);
   delay(2000);
-  displayToScreen("Team 1", 25, 35);
+  displayToScreen("Team 1", 30, 35);
 
   // Remove old log file
   if (SD.exists(filename)) {
@@ -114,7 +117,7 @@ void setup() {
   dataFile.close();
   } else {
     Serial.println("Error creating new log file.");
-    displayTwoLines("Error creating", "new log file.", u8g2_font_ncenB10_tr);
+    displayTwoLines("Error creating", "new log file.", u8g2_font_ncenB10_tr, 10, 20);
     delay(2000);
   }
 }
@@ -126,8 +129,37 @@ void loop() {
   updateGPSData();
   logToSD();
   // displayToScreen();
-  //readNextLineFromSD();
-  delay(1000); // 1Hz logging rate will be removed later!
+  // readNextLineFromSD();
+  //delay(1000); // 1Hz logging rate will be removed later!
+
+  // Looping through team number, battery voltage and GPS satellite
+  if (millis() - lastDisplaySwitch > 2000) {    // Check if 2000 ms (2 seconds) have passed since last display change
+    lastDisplaySwitch = millis();               // Reset the timer
+
+    displayState = (displayState + 1) % 3;      // Move to next state (0 -> 1 -> 2 -> 0)
+
+    switch (displayState) {
+      case 0: {     // Display team
+        displayToScreen("Team 1", 25, 35);      // Show "Team 1" centered on screen
+        break;
+      }
+
+      case 1: {     // Display battery level
+        char buf[20];                                                   // Create a text buffer
+        snprintf(buf, sizeof(buf), "%.2fV", batteryLevel);              // Format voltage as "3.70V"
+        displayTwoLines("Battery level:", buf, u8g2_font_ncenB10_tr, 15, 50);
+        break;
+      }
+
+      case 2: {     // Display GPS satellites count
+        displayTwoLines("Satellites:", (const char*) SatCount, u8g2_font_ncenB10_tr, 28, 60);
+        break;
+      }
+    }
+  }
+
+  // Optional: add a short delay to reduce CPU load if needed
+  // delay(100); // (uncomment if display flickers or CPU usage is high)
 }
 
 // === IMU Data Update ===
@@ -183,19 +215,19 @@ void logToSD() {
 // === OLED Display === For short messages
 void displayToScreen(const char str[], u8g2_uint_t x, u8g2_uint_t y) {
   u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_ncenB14_tr); // u8g2_font_ncenB14_tr big size -- u8g2_font_ncenB10_tr IS OK // TOO SMALL u8g2_font_5x8_tr
-  u8g2.setCursor(x, y); // Centered: (25, 35) -- Starting from the left: (0, 35)
+  u8g2.setFont(u8g2_font_ncenB14_tr);   // u8g2_font_ncenB14_tr big size -- u8g2_font_ncenB10_tr IS OK // TOO SMALL u8g2_font_5x8_tr
+  u8g2.setCursor(x, y);                 // Centered: (25, 35) -- Starting from the left: (0, 35)
   u8g2.print(str);
   u8g2.sendBuffer();
 }
 
-// === OLED Display === In two lines for 
-void displayTwoLines(const char line1[], const char line2[], const uint8_t* font) {
+// === OLED Display === In two lines 
+void displayTwoLines(const char line1[], const char line2[], const uint8_t* font, u8g2_uint_t x1, u8g2_uint_t x2) { // x1: x-axis position 1st line.  x2: x-axis position 2nd line.
   u8g2.clearBuffer();
   u8g2.setFont(font);
-  u8g2.setCursor(0, 25);  // Y=25 for first line (adjust as needed)
+  u8g2.setCursor(x1, 25);  // Y1 = 25 for first line (adjust as needed)
   u8g2.print(line1);
-  u8g2.setCursor(0, 50);  // Y=50 for second line (25+line height)
+  u8g2.setCursor(x2, 50);  // Y2 = 50 for second line (25+line height)
   u8g2.print(line2);
   u8g2.sendBuffer();
 }
@@ -230,39 +262,38 @@ void readNextLineFromSD() {
 
 // === Barometer Data Update ===
 void updateGPSData() {
-  while (Serial1.available()) {
-    char c = Serial1.read();
+    while (Serial1.available()) {
+      char c = Serial1.read();
 
-    // Print raw NMEA sentence
-    Serial.write(c);
+      // Print raw NMEA sentence
+      Serial.write(c);
 
-    // Feed to TinyGPS parser
-    gps.encode(c);
-  
-    SatCount     = gps.satellites.value();
+      // Feed to TinyGPS parser
+      gps.encode(c);
+    
+      SatCount     = gps.satellites.value();
 
-  // Show satellite count every ~1s
-  if (millis() % 1000 < 50) {
-    Serial.print("\n Satellites visible: ");
-    Serial.println(gps.satellites.value());
-    displayTwoLines("Satellites visible: ", String(SatCount).c_str(), u8g2_font_ncenB10_tr);
+    // Show satellite count every ~1s
+    if (millis() % 1000 < 50) {
+      Serial.print("\n Satellites count: ");
+      Serial.println(gps.satellites.value());
+      displayTwoLines("Satellites count: ", String(SatCount).c_str(), u8g2_font_ncenB10_tr, 5, 20);
+    }
 
-  }
+    if (gps.location.isUpdated()) {
+      latitude     = gps.location.lat();
+      longitude    = gps.location.lng();
+      gpsAltitude  = gps.altitude.meters();
+      Speed        = gps.speed.kmph();
+      SatCount     = gps.satellites.value();
 
-  if (gps.location.isUpdated()) {
-    latitude     = gps.location.lat();
-    longitude    = gps.location.lng();
-    gpsAltitude  = gps.altitude.meters();
-    Speed        = gps.speed.kmph();
-    SatCount     = gps.satellites.value();
-
-    Serial.println("\n✅ Parsed GPS Data:");
-    Serial.print("Latitude: "); Serial.println(latitude, 6);
-    Serial.print("Longitude: "); Serial.println(longitude, 6);
-    Serial.print("Satellites: "); Serial.println(SatCount);
-    Serial.print("Speed (km/h): "); Serial.println(Speed);
-    Serial.print("Altitude (m): "); Serial.println(gpsAltitude);
-    Serial.println("----------------------");
+      Serial.println("\n✅ Parsed GPS Data:");
+      Serial.print("Latitude: "); Serial.println(latitude, 6);
+      Serial.print("Longitude: "); Serial.println(longitude, 6);
+      Serial.print("Satellites: "); Serial.println(SatCount);
+      Serial.print("Speed (km/h): "); Serial.println(Speed);
+      Serial.print("Altitude (m): "); Serial.println(gpsAltitude);
+      Serial.println("----------------------");
     }
   }
 }
