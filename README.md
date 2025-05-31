@@ -29,8 +29,7 @@ This project is a **Flight Data Logger** designed for UAVs and model aircrafts. 
 
 ## 🔧 Circuit Diagram
 
-> ⚠️ **WIRING DIAGRAM PLACEHOLDER**  
->  **Wiring Diagram not finished yet**
+[Wiring diagram](Datenlogger_Files/Wiring_diagram_1.2.jpg)
 
 ---
 
