@@ -34,6 +34,13 @@ int SatCount = 0;
 float pressure, paltitude, temperature;
 float roll, pitch, yaw = 0.0;
 
+// === Calibration Sums &  Sensor's Offsets ===
+float accX_sum  = 0, accY_sum  = 0, accZ_sum  = 0;
+float gyroX_sum = 0, gyroY_sum = 0, gyroZ_sum = 0;
+
+float accX_off  = 0, accY_off  = 0, accZ_off  = 0;
+float gyroX_off = 0, gyroY_off = 0, gyroZ_off = 0;
+
 // === Function Declarations ===
 void displayToScreen(const char str[], u8g2_uint_t x, u8g2_uint_t y);
 void displayTwoLines(const char line1[], const char line2[], const uint8_t* font);
@@ -68,6 +75,7 @@ void setup() {
     displayTwoLines("Failed to", "ininitialize IMU!", u8g2_font_ncenB10_tr);
     while (1);
   }
+  calibrateIMU();
   Serial.println("IMU initialized successfully!");
   displayTwoLines("IMU initialized", "successfully!", u8g2_font_ncenB10_tr);
   delay(2000);
@@ -134,13 +142,45 @@ void loop() {
 void updateIMUData() {
   if (IMU.accelerationAvailable()) {
     IMU.readAcceleration(accX, accY, accZ);
+    accX -= accX_off;
+    accY -= accY_off;
+    accZ -= accZ_off;
   }
   if (IMU.gyroscopeAvailable()) {
     IMU.readGyroscope(gyroX, gyroY, gyroZ);
+    gyroX -= gyroX_off;
+    gyroY -= gyroY_off;
+    gyroZ -= gyroZ_off;
   }
   if (IMU.magneticFieldAvailable()) {
     IMU.readMagneticField(magX, magY, magZ);
   }
+}
+
+// === IMU Calibration ===
+void calibrateIMU() {
+  const int CALIB_SAMPLES = 100;
+
+  for (int i = 0;  i < CALIB_SAMPLES; i++) {
+    // Waits until data is ready for collection
+    while(!IMU.accelerationAvailable());
+    IMU.readAcceleration(accX, accY, accZ);
+
+    while(!IMU.gyroscocpeAvailable());
+    IMU.readGyroscope(gyroX, gyroY, gyroZ);
+
+    // Store the values 
+    accX_sum  += accX;   accY_sum  += accY;   accZ_sum  += accZ;
+    gyroX_sum += gyroX;  gyroY_sum += gyroY;  gyroZ_sum += gyroZ;
+
+    delay(2000);     // Adjusted to 0.5 Hz sampling rate. If 10 Hz is needed, change to delay(100)
+  }
+
+  // Calculate the offsets
+  accX_off  = accX_sum  / CALIB_SAMPLES;  accY_off  = accY_sum  / CALIB_SAMPLES;  accZ_off  = accZ_sum  / CALIB_SAMPLES;
+  gyroX_off = gyroX_sum / CALIB_SAMPLES;  gyroY_off = gyroY_sum / CALIB_SAMPLES;  gyroZ_off = gyroZ_sum / CALIB_SAMPLES;
+
+  Serial.println("IMU calibration complete.");
 }
 
 // === Barometer Data Update ===
