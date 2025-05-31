@@ -28,6 +28,7 @@ This project is a **Flight Data Logger** designed for UAVs and model aircrafts. 
 ---
 
 ## 🔧 Circuit Diagram
+needs to replace resistor 430 with 510 ohms
 
 [Wiring diagram](Datenlogger_Files/Wiring_diagram_1.2.jpg)
 
@@ -37,18 +38,16 @@ This project is a **Flight Data Logger** designed for UAVs and model aircrafts. 
 
 To safely read battery voltage levels using the Arduino's 3.3V ADC pin, use the following voltage divider:
 
-- **Input Voltage**: Up to 4V (LiPo 1S max)
+- **Input Voltage**: Up to 4.2V (LiPo 1S max)
 - **Divider Resistors**:
   - R1: **1.8kΩ**
-  - R2: **380Ω**
+  - R2: **510**
 
 ### 📐 Voltage Divider Calculation
 
 Vout = Vin × (1 - (R2 / (R1 + R2))
-= 4 × (1- (380 / (1800 + 380)) ≈ 3.3V
+= 4.2 × (1- (510 / (1800 + 510)) ≈ 3.272V
 
-
-This protects your ADC pin from overvoltage.
 
 ---
 
