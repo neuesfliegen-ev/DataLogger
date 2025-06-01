@@ -10,11 +10,9 @@
 // Create GPS parser
 TinyGPSPlus gps;
 
-
 // Voltage divider values
 const float R1 = 1800.0; // Ohms
 const float R2 = 380.0;  // Ohms
-
 
 // === OLED Setup (SH1106 I2C) ===
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
@@ -34,10 +32,7 @@ int SatCount = 0;
 float pressure, paltitude, temperature;
 float roll, pitch, yaw = 0.0;
 
-// === Calibration Sums &  Sensor's Offsets ===
-float accX_sum  = 0, accY_sum  = 0, accZ_sum  = 0;
-float gyroX_sum = 0, gyroY_sum = 0, gyroZ_sum = 0;
-
+// === Global Sensor's Offsets ===
 float accX_off  = 0, accY_off  = 0, accZ_off  = 0;
 float gyroX_off = 0, gyroY_off = 0, gyroZ_off = 0;
 
@@ -140,17 +135,20 @@ void loop() {
 
 // === IMU Data Update ===
 void updateIMUData() {
+  float preAccX, preAccY, preAccZ;
+  float preGyroX, preGyroY, preGyroZ;
+  
   if (IMU.accelerationAvailable()) {
-    IMU.readAcceleration(accX, accY, accZ);
-    accX -= accX_off;
-    accY -= accY_off;
-    accZ -= accZ_off;
+    IMU.readAcceleration(preAccX, preAccY, preAccZ);
+    accX = preAccX - accX_off;
+    accY = preAccY - accY_off;
+    accZ = preAccZ - accZ_off;
   }
   if (IMU.gyroscopeAvailable()) {
-    IMU.readGyroscope(gyroX, gyroY, gyroZ);
-    gyroX -= gyroX_off;
-    gyroY -= gyroY_off;
-    gyroZ -= gyroZ_off;
+    IMU.readGyroscope(preGyroX, preGyroY, preGyroZ);
+    gyroX = preGyroX - gyroX_off;
+    gyroY = preGyroY - gyroY_off;
+    gyroZ = preGyroZ - gyroZ_off;
   }
   if (IMU.magneticFieldAvailable()) {
     IMU.readMagneticField(magX, magY, magZ);
@@ -160,6 +158,9 @@ void updateIMUData() {
 // === IMU Calibration ===
 void calibrateIMU() {
   const int CALIB_SAMPLES = 100;
+
+  float accX_sum  = 0, accY_sum  = 0, accZ_sum  = 0;
+  float gyroX_sum = 0, gyroY_sum = 0, gyroZ_sum = 0;
 
   for (int i = 0;  i < CALIB_SAMPLES; i++) {
     // Waits until data is ready for collection
@@ -173,11 +174,11 @@ void calibrateIMU() {
     accX_sum  += accX;   accY_sum  += accY;   accZ_sum  += accZ;
     gyroX_sum += gyroX;  gyroY_sum += gyroY;  gyroZ_sum += gyroZ;
 
-    delay(2000);     // Adjusted to 0.5 Hz sampling rate. If 10 Hz is needed, change to delay(100)
+    delay(25);     // Accelerometer and gyrospcope output data rate is fixed at 99.84 Hz (10ms)
   }
 
   // Calculate the offsets
-  accX_off  = accX_sum  / CALIB_SAMPLES;  accY_off  = accY_sum  / CALIB_SAMPLES;  accZ_off  = accZ_sum  / CALIB_SAMPLES;
+  accX_off  = accX_sum  / CALIB_SAMPLES;  accY_off  = accY_sum  / CALIB_SAMPLES;  accZ_off  = (accZ_sum / CALIB_SAMPLES) - 1;
   gyroX_off = gyroX_sum / CALIB_SAMPLES;  gyroY_off = gyroY_sum / CALIB_SAMPLES;  gyroZ_off = gyroZ_sum / CALIB_SAMPLES;
 
   Serial.println("IMU calibration complete.");
