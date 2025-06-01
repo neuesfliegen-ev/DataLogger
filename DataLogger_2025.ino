@@ -10,11 +10,25 @@
 // Create GPS parser
 TinyGPSPlus gps;
 
+// === Pin Assignment ===
+constexpr uint8_t PIN_BUTTON = 3; 
+constexpr uint8_t PIN_LED_RED = 8; 
+constexpr uint8_t PIN_LED_GREEN = 9; 
+constexpr uint8_t PIN_BAT_VSENSE = A0;
 
-// Voltage divider values
+// Voltage Divider Values
 const float R1 = 1800.0; // Ohms
 const float R2 = 380.0;  // Ohms
 
+// === Battery Indicator Values ===
+constexpr uint16_t ADC_MAX = 4095; // at 12-bit resolution
+constexpr float VREF = 3.30F; // Volts 
+constexpr float BAT_VLOW = 3.70F; // Volts at low battery
+float batteryVoltage = 0;
+
+// === Button and Logging ===
+constexpr uint8_t DEBOUNCE_MS = 30;
+constexpr uint8_t LOG_INTERVAL = 100; // millisecond interval to log data
 
 // === OLED Setup (SH1106 I2C) ===
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
@@ -41,9 +55,26 @@ void updateIMUData();
 void updateBarometerData();
 void logToSD();
 void readNextLineFromSD();
+bool buttonReleased();
+void updateBatteryVoltage();
+void checkBattery();
+void startLog();
+void stopLog();
+void updateLogging(); // starts logging at button *release*
 
 void setup() {
   Serial.begin(115200);    // USB serial for debug
+
+  // Battery indication 
+  pinMode(PIN_LED_RED, OUTPUT);
+  pinMode(PIN_LED_GREEN, OUTPUT);
+  pinMode(PIN_BAT_VSENSE, INPUT);
+  digitalWrite(PIN_LED_RED, LOW);
+  digitalWrite(PIN_LED_GREEN, HIGH);
+  analogReadResolution(12); 
+
+  // Button 
+  pinMode(PIN_BUTTON, INPUT_PULLUP);
   
   // OLED Init
   u8g2.begin();
@@ -121,13 +152,13 @@ void setup() {
 
 void loop() {
   timestamp = millis();
+  checkBattery();
   updateIMUData();
   updateBarometerData();
   updateGPSData();
-  logToSD();
+  updateLogging(); // data logged at each interval only
   // displayToScreen();
   //readNextLineFromSD();
-  delay(1000); // 1Hz logging rate will be removed later!
 }
 
 // === IMU Data Update ===
@@ -151,7 +182,6 @@ void updateBarometerData() {
 
 // === Log Data to SD ===
 void logToSD() {
-  dataFile = SD.open(filename, FILE_WRITE);
   if (dataFile) {
     dataFile.print(timestamp); dataFile.print(",");
     dataFile.print(accX); dataFile.print(",");
@@ -174,7 +204,6 @@ void logToSD() {
     dataFile.print(pressure); dataFile.print(",");
     dataFile.print(temperature); dataFile.print(",");
     dataFile.println(paltitude);
-    dataFile.close();
   } else {
     Serial.println("Error writing to SD card.");
   }
@@ -264,5 +293,77 @@ void updateGPSData() {
     Serial.print("Altitude (m): "); Serial.println(gpsAltitude);
     Serial.println("----------------------");
     }
+  }
+}
+
+// === Check if button is pressed and released ===
+bool buttonReleased() {
+  static uint32_t lastEdge = 0;
+  static bool lastStableState = HIGH;
+  bool reading = digitalRead(PIN_BUTTON);
+  uint32_t currentTime = millis();
+
+  if (reading != lastStableState && (currentTime - lastEdge) > DEBOUNCE_MS) {
+    lastEdge = currentTime;
+    if (lastStableState == LOW && reading == HIGH) {
+      lastStableState = reading;
+      return true; // button pressed
+    }
+    lastStableState = reading;
+  }
+
+  return false;
+}
+
+// === Updates current battery voltage ===
+void updateBatteryVoltage(){
+  batteryVoltage = analogRead(PIN_BAT_VSENSE) * VREF / ADC_MAX * (R1 + R2) / R2;
+}
+
+// === Checks battery charging need ===
+void checkBattery(){
+  updateBatteryVoltage();
+  if(batteryVoltage <= BAT_VLOW){ //!!!check LED connection for HIGH/LOW assignment
+    digitalWrite(PIN_LED_GREEN, LOW);
+    digitalWrite(PIN_LED_RED, HIGH);
+  } else {
+    digitalWrite(PIN_LED_RED, LOW);
+    digitalWrite(PIN_LED_GREEN, HIGH);
+  }
+}
+
+// === Activates data logging status ===
+void startLog(){
+  dataFile = SD.open(filename, FILE_WRITE);
+  logState = LogState::ACTIVE;
+  Serial.println("Started data logging");
+}
+
+// === Deactivates data logging status ===
+void stopLog(){
+  if(dataFile){
+    dataFile.flush();
+    dataFile.close();
+    Serial.println("File closed");
+  }else{
+    Serial.println("File wasn't open");
+  }
+  logState = LogState::IDLE;
+  Serial.println("Stopped data logging");
+}
+
+// === Updates data logging ===
+void updateLogging(){
+  static uint32_t lastLogStamp = 0;
+
+  if(buttonReleased() && logState == LogState::IDLE){
+    startLog();
+  }else if(buttonReleased() && logState == LogState::ACTIVE){
+    stopLog();
+  }
+  
+  if(logState == LogState::ACTIVE && millis() - lastLogStamp >= LOG_INTERVAL){
+    logtoSD();
+    lastLogStamp = millis();
   }
 }
