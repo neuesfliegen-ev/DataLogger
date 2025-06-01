@@ -274,11 +274,11 @@ void updateGPSData() {
       SatCount     = gps.satellites.value();
 
     // Show satellite count every ~1s
-    if (millis() % 1000 < 50) {
-      Serial.print("\n Satellites count: ");
-      Serial.println(gps.satellites.value());
-      displayTwoLines("Satellites count: ", String(SatCount).c_str(), u8g2_font_ncenB10_tr, 5, 20);
-    }
+  //  if (millis() % 1000 < 50) {
+  //    Serial.print("\n Satellites count: ");
+  //    Serial.println(gps.satellites.value());
+  //    displayTwoLines("Satellites count: ", String(SatCount).c_str(), u8g2_font_ncenB10_tr, 5, 20);
+  //  }
 
     if (gps.location.isUpdated()) {
       latitude     = gps.location.lat();
