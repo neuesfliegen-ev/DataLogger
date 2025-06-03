@@ -13,7 +13,7 @@ TinyGPSPlus gps;
 
 // Voltage divider values
 const float R1 = 1800.0; // Ohms
-const float R2 = 380.0;  // Ohms
+const float R2 = 510.0;  // Ohms
 
 
 // === OLED Setup (SH1106 I2C) ===
@@ -48,7 +48,7 @@ void logToSD();
 void readNextLineFromSD();
 
 void setup() {
-  Serial.begin(115200);    // USB serial for debug
+  Serial.begin(9600);    // USB serial for debug
 
   // OLED Init
   u8g2.begin();
@@ -152,7 +152,7 @@ void loop() {
       }
 
       case 2: {     // Display GPS satellites count
-        displayTwoLines("Satellites:", (const char*) SatCount, u8g2_font_ncenB10_tr, 28, 60);
+        displayTwoLines("Satellites:", String(SatCount).c_str(), u8g2_font_ncenB10_tr, 28, 60);
         break;
       }
     }
@@ -273,7 +273,7 @@ void updateGPSData() {
     
       SatCount     = gps.satellites.value();
 
-    // Show satellite count every ~1s
+  // Show satellite count every ~1s
   //  if (millis() % 1000 < 50) {
   //    Serial.print("\n Satellites count: ");
   //    Serial.println(gps.satellites.value());
