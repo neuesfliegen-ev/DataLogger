@@ -1,3 +1,8 @@
 Battery Voltage infos
 
 Minimum Voltage 3.5v for Datalogger before charging is needed
+
+@1000 mF Cap over the Sim card is needed for stable Power 
+
+Sim Card board will be connected directly to the battery.
+
