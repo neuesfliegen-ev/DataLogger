@@ -55,6 +55,10 @@ int SatCount = 0;
 float pressure, paltitude, temperature; 
 float roll, pitch, yaw = 0.0;
 
+// === Calibration Variables ===
+float accX_off  = 0, accY_off  = 0, accZ_off  = 0;
+float gyroX_off = 0, gyroY_off = 0, gyroZ_off = 0;
+
 // === Display Variables ===
 unsigned long lastDisplaySwitch = 0; // Keep track of the last time the display was updated
 int displayState = 0;                // Keep track of what to show: 0 = team, 1 = battery, 2 = satellites
@@ -83,6 +87,7 @@ String dataBuffer = ""; // Buffer for batching data
 void displayToScreen(const char str[], u8g2_uint_t x, u8g2_uint_t y);
 void displayTwoLines(const char line1[], const char line2[], const uint8_t* font, u8g2_uint_t x1, u8g2_uint_t x2);
 void updateIMUData();
+void calibrateIMU(); 
 void updateBarometerData();
 String generateDataLine();
 void logToSD();
@@ -117,7 +122,7 @@ void setup() {
   displayTwoLines("OLED", "initialized!", u8g2_font_ncenB10_tr, 40, 25);
   delay(2000);
 
-  // IMU Init (Rev2)
+ // IMU Init (Rev2)
   displayTwoLines("Initializing", "IMU...", u8g2_font_ncenB10_tr, 25, 45);
   delay(2000);
   if (!IMU.begin()) {
@@ -125,6 +130,10 @@ void setup() {
     displayTwoLines("Failed to", "initialize IMU.", u8g2_font_ncenB10_tr, 35, 10);
     while (1);
   }
+  calibrateIMU();
+  Serial.println("IMU calibration complete.");  
+  displayTwoLines("IMU calibration", "complete.", u8g2_font_ncenB10_tr, 10, 20);
+  delay(2000);  // Remove once we make sure an ISR cant interrupt it.
   Serial.println("IMU initialized successfully!");
   displayTwoLines("IMU initialized", "successfully!", u8g2_font_ncenB10_tr, 10, 20);
   delay(2000);
@@ -269,14 +278,96 @@ void loop() {
 
 // === IMU Data Update ===
 void updateIMUData() {
+  float preAccX, preAccY, preAccZ;
+  float preGyroX, preGyroY, preGyroZ;
+  
   if (IMU.accelerationAvailable()) {
-    IMU.readAcceleration(accX, accY, accZ);
+    IMU.readAcceleration(preAccX, preAccY, preAccZ);
+    accX = preAccX - accX_off;
+    accY = preAccY - accY_off;
+    accZ = preAccZ - accZ_off;
   }
   if (IMU.gyroscopeAvailable()) {
-    IMU.readGyroscope(gyroX, gyroY, gyroZ);
+    IMU.readGyroscope(preGyroX, preGyroY, preGyroZ);
+    gyroX = preGyroX - gyroX_off;
+    gyroY = preGyroY - gyroY_off;
+    gyroZ = preGyroZ - gyroZ_off;
   }
   if (IMU.magneticFieldAvailable()) {
     IMU.readMagneticField(magX, magY, magZ);
+  }
+}
+
+// === IMU Calibration ===
+void calibrateIMU() {
+  const int CALIB_SAMPLES = 25;
+  float temp;
+  float accXCalibBuffer[CALIB_SAMPLE_COUNT];
+  float accYCalibBuffer[CALIB_SAMPLE_COUNT];  
+  float accZCalibBuffer[CALIB_SAMPLE_COUNT];
+  float gyroXCalibBuffer[CALIB_SAMPLE_COUNT];
+  float gyroYCalibBuffer[CALIB_SAMPLE_COUNT];
+  float gyroZCalibBuffer[CALIB_SAMPLE_COUNT];
+
+  for (int i = 0;  i < CALIB_SAMPLES; i++) {
+    // Waits until all data is ready for collection
+    while(!IMU.accelerationAvailable() || !IMU.gyroscocpeAvailable()));
+    IMU.readAcceleration(accX, accY, accZ);
+    IMU.readGyroscope(gyroX, gyroY, gyroZ);
+
+    // Store the values 
+    accXCalibBuffer[i] = accX;  accYCalibBuffer[i] = accY;  accZCalibBuffer[i] = accZ;  
+    gyroXCalibBuffer[i] = gyroX; gyroYCalibBuffer[i] = gyroY;  gyroZCalibBuffer[i] = gyroZ; 
+
+    // Accelerometer and gyrospcope output data rate is fixed at 99.84 Hz (10ms)
+    delay(11);
+  }
+    
+  // Bubble Sorting to find the Median (for each sensor)
+  for (int i = 0; i < CALIB_SAMPLE_COUNT - 1; i++) {
+    for (int j = 0; j < CALIB_SAMPLE_COUNT - i - 1; j++) {
+      // accX
+      if (accXCalibBuffer[j] > accXCalibBuffer[j + 1]) {
+        temp = accXCalibBuffer[j];
+        accXCalibBuffer[j] = accXCalibBuffer[j + 1];
+        accXCalibBuffer[j + 1] = temp;
+      }
+      // accY
+      if (accYCalibBuffer[j] > accYCalibBuffer[j + 1]) {
+        temp = accYCalibBuffer[j];
+        accYCalibBuffer[j] = accYCalibBuffer[j + 1];
+        accYCalibBuffer[j + 1] = temp;
+      }
+      // accZ
+      if (accZCalibBuffer[j] > accZCalibBuffer[j + 1]) {
+        temp = accZCalibBuffer[j];
+        accZCalibBuffer[j] = accZCalibBuffer[j + 1];
+        accZCalibBuffer[j + 1] = temp;
+      }
+      // gyroX
+      if (gyroXCalibBuffer[j] > gyroXCalibBuffer[j + 1]) {
+        temp = gyroXCalibBuffer[j];
+        gyroXCalibBuffer[j] = gyroXCalibBuffer[j + 1];
+        gyroXCalibBuffer[j + 1] = temp;
+      }
+      // gyroY
+      if (gyroYCalibBuffer[j] > gyroYCalibBuffer[j + 1]) {
+        temp = gyroYCalibBuffer[j];
+        gyroYCalibBuffer[j] = gyroYCalibBuffer[j + 1];
+        gyroYCalibBuffer[j + 1] = temp;
+      }
+      // gyroZ
+      if (gyroZCalibBuffer[j] > gyroZCalibBuffer[j + 1]) {
+        temp = gyroZCalibBuffer[j];
+        gyroZCalibBuffer[j] = gyroZCalibBuffer[j + 1];
+        gyroZCalibBuffer[j + 1] = temp;
+      }
+    }
+
+   // Calculate the offsets
+   int middle = CALIB_SAMPLES / 2;
+   accX_off = accXCalibBuffer[middle];  accY_off = accYCalibBuffer[middle];  accZ_off = accZCalibBuffer[middle] - 1;
+   gyroX_off = gyroXCalibBuffer[middle];  gyroY_off = gyroYCalibBuffer[middle];  gyroZ_off = gyroZCalibBuffer[middle];
   }
 }
 
