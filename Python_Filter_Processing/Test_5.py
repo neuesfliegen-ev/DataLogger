@@ -33,7 +33,7 @@ filtered_acc_z = centered_moving_average(df['accZ'], window_size)
 
 plt.figure(figsize=(12, 6))
 plt.plot(time, acc_z, color='gray', alpha=0.5, label='Raw Data')
-plt.plot(time, filtered_acc_z, color='red', linewidth=2, label='Smoothed (100-point MA)')
+plt.plot(time, filtered_acc_z, color='red', linewidth=2, label=f'Smoothed ({window_size}-point MA)')
 
 # Customize plot
 plt.title("Accelerometer Data: Raw vs. Smoothed", fontsize=14)
