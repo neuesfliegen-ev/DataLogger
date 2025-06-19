@@ -15,8 +15,9 @@ being dynamically adjusted at the edges.
 df = pd.read_excel('Datalogger.xlsx', sheet_name='Sheet2') # Import entire Excel file as a dataframe
 time = df['adjusted_timestamp']
 acc_z = df['accZ']
+window_size = 9 # Adjust window size here
 
-df['filtered_acc_z'] = df['accZ'].rolling(100, center=True, min_periods=1).mean() # "min_periods=1" returns partial values (e.g., 3-point avg for the 2nd value).
+df['filtered_acc_z'] = df['accZ'].rolling(window_size, center=True, min_periods=1).mean() # "min_periods=1" returns partial values (e.g., 3-point avg for the 2nd value).
 
 # print to check the length of each column
 # not neccessary for the functionality of the code
@@ -24,7 +25,7 @@ print(f"Time: {len(df['adjusted_timestamp'])}, acc_z: {len(df['accZ'])}, filtere
 
 plt.figure(figsize=(12, 6))
 plt.plot(time, acc_z, color='gray', alpha=0.5, label='Raw Data')
-plt.plot(time, df['filtered_acc_z'], color='red', linewidth=2, label='Smoothed (100-point MA)')
+plt.plot(time, df['filtered_acc_z'], color='red', linewidth=2, label=f'Smoothed ({window_size}-point MA)')
 
 # Customize plot
 plt.title("Accelerometer Data: Raw vs. Smoothed", fontsize=14)
