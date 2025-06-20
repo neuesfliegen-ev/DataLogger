@@ -19,7 +19,7 @@ def centered_moving_average(data, window_size):
     for i in range(len(data)):
         # Determine the dynamic window bounds
         start = max(0, i - half_win)          # Avoid negative indices
-        end = min(len(data), i + half_win) # Avoid exceeding array length
+        end = min(len(data), i + half_win + 1) # Avoid exceeding array length
         smoothed[i] = np.mean(data[start:end])
     
     return smoothed

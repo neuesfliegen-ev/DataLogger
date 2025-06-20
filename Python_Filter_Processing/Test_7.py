@@ -12,17 +12,14 @@ import matplotlib.pyplot as plt
 
 """
 
-def centered_moving_average(data, window_size, offset):
-    half_win = window_size // 2  # e.g., 2 for a 5-point window
-    smoothed = np.zeros_like(data) # create a new array of zeros with the same size as input 'data' array
-    
+def causal_moving_average(data, window, offset):
+    smoothed = np.zeros_like(data)
+
     for i in range(len(data)):
-        # Determine the dynamic window bounds
-        start = max(0, i - half_win)          # Avoid negative indices
-        end = min(len(data), i + half_win + 1) # Avoid exceeding array length
-        smoothed[i] = np.mean(data[start:end] - offset)
-    
-    return smoothed
+        start = max(0, i - window)
+        smoothed[i] = np.mean(data[start : i + 1] - offset)
+
+    return smoothed 
 
 df = pd.read_excel('Datalogger.xlsx', sheet_name='Sheet2') # Import entire Excel file as a dataframe
 window_size = 100 # adjust window size here as needed
@@ -30,11 +27,13 @@ offset = 1 # adjust offset here as needed
 time = df['adjusted_timestamp']
 acc_z = df['accZ'] - offset
 
-filtered_acc_z = centered_moving_average(df['accZ'], window_size, offset)
+filtered_acc_z = causal_moving_average(df['accZ'], window_size, offset)
+
+print("\n", filtered_acc_z, "\n")
 
 plt.figure(figsize=(20, 15))
 plt.plot(time, acc_z, color='gray', alpha=0.5, label='Raw Data')
-plt.plot(time, filtered_acc_z, color='red', linewidth=2, label=f'Smoothed ({window_size}-point MA)')
+plt.plot(time, filtered_acc_z, color='red', linewidth=2, label=f'Smoothed ({window_size}-point Causal MA)')
 
 # Customize plot
 plt.title("Accelerometer Data: Raw vs. Smoothed", fontsize=14)
