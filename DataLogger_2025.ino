@@ -20,11 +20,11 @@ TinyGPSPlus gps;
 const float R1 = 1786.0; // 1800Ohms 
 const float R2 = 505.0;  // 510 Ohms
 
-//=== Pin Assignment ===
-// constexpr tells the comoiler that the value of a variabl can (and should) be evaluated at compile time
-constexpr uint8_t PIN_BUTTON = 3; 
+//=== Pin Assignment for batt indicators===
+// constexpr tells the compiler that the value of a variabl can (and should) be evaluated at compile time
 constexpr uint8_t PIN_LED_RED = 8; 
 constexpr uint8_t PIN_LED_GREEN = 9; 
+constexpr uint8_t PIN_LED_BLUE = 7; 
 constexpr uint8_t PIN_BAT_VSENSE = A1;
 
 // === Battery Indicator Values ===
@@ -33,9 +33,6 @@ constexpr float VREF = 3.30F; // Volts
 constexpr float BAT_VLOW = 3.50F; // Volts at low battery
 float batteryVoltage = 0;
 
-// === Button and Logging ===
-constexpr uint8_t DEBOUNCE_MS = 30;
-constexpr uint8_t LOG_INTERVAL = 100; // millisecond interval to log data
 
 // === OLED Setup (SH1106 I2C) ===
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
@@ -43,7 +40,8 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 // === SD Card Config ===
 const int chipSelect = 10;
 File dataFile;
-String filename = "";
+char filename[13];  // 8 + 1 + 3 + null terminator = 13 -- arduino lib deals with 8.3 format! 8 letetrs and . then 3 letter as extention 
+
 
 // === Global Sensor Variables ===
 unsigned long timestamp;
@@ -55,18 +53,18 @@ int SatCount = 0;
 float pressure, paltitude, temperature; 
 float roll, pitch, yaw = 0.0;
 
-// === Calibration Variables ===
-float accX_off  = 0, accY_off  = 0, accZ_off  = 0;
-float gyroX_off = 0, gyroY_off = 0, gyroZ_off = 0;
-
 // === Display Variables ===
 unsigned long lastDisplaySwitch = 0; // Keep track of the last time the display was updated
 int displayState = 0;                // Keep track of what to show: 0 = team, 1 = battery, 2 = satellites
 
-// == button variables 
-static uint32_t lastEdge = 0;
-static bool lastStableState = HIGH;
-bool reading = 0;
+// === Button Handling ===
+const int PIN_BUTTON = 3;                // Make sure this is an interrupt-capable pin
+constexpr uint8_t DEBOUNCE_MS = 200;
+
+volatile bool buttonInterruptFlag = false;
+unsigned long lastEdge = 0;
+bool lastStableState = HIGH;            // Assuming pull-up resistor
+
 
 //logging variables: 
 // Logging state using enum
@@ -79,7 +77,11 @@ const unsigned long WRITE_INTERVAL = 1000;  // Write to SD every 1 sec
 const unsigned long FLUSH_INTERVAL = 10000;  // Flush SD every 5 sec
 String dataBuffer = ""; // Buffer for batching data
 
-
+// === Calibration Variables ===
+float accX_off  = 0, accY_off  = 0, accZ_off  = 0;
+float gyroX_off = 0, gyroY_off = 0, gyroZ_off = 0;
+float preAccX, preAccY, preAccZ = 0;
+float preGyroX, preGyroY, preGyroZ = 0;
 
 
 
@@ -87,11 +89,11 @@ String dataBuffer = ""; // Buffer for batching data
 void displayToScreen(const char str[], u8g2_uint_t x, u8g2_uint_t y);
 void displayTwoLines(const char line1[], const char line2[], const uint8_t* font, u8g2_uint_t x1, u8g2_uint_t x2);
 void updateIMUData();
-void calibrateIMU(); 
 void updateBarometerData();
 String generateDataLine();
 void logToSD();
-
+void calibrateIMU(); 
+void generateFilename(); 
 void readNextLineFromSD();
 
 // button logic and voltage divider!
@@ -101,6 +103,7 @@ void checkBattery();
 void startLog();
 void stopLog();
 void updateLogging(); // starts logging at button *release*
+void printIMUOffsetsAndReadings();
 
 void setup() {
   Serial.begin(9600);    // USB serial for debug
@@ -108,21 +111,21 @@ void setup() {
   // Battery indication 
   pinMode(PIN_LED_RED, OUTPUT);
   pinMode(PIN_LED_GREEN, OUTPUT);
+  pinMode(PIN_LED_BLUE, OUTPUT);
   pinMode(PIN_BAT_VSENSE, INPUT);
-  digitalWrite(PIN_LED_RED, LOW);
-  digitalWrite(PIN_LED_GREEN, HIGH);
   analogReadResolution(12); 
   checkBattery();
 
   // Button 
   pinMode(PIN_BUTTON, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(PIN_BUTTON), onButtonPress, FALLING); // Assuming active-low button
 
   // OLED Init
   u8g2.begin();
   displayTwoLines("OLED", "initialized!", u8g2_font_ncenB10_tr, 40, 25);
   delay(2000);
 
- // IMU Init (Rev2)
+  // IMU Init (Rev2)
   displayTwoLines("Initializing", "IMU...", u8g2_font_ncenB10_tr, 25, 45);
   delay(2000);
   if (!IMU.begin()) {
@@ -130,6 +133,9 @@ void setup() {
     displayTwoLines("Failed to", "initialize IMU.", u8g2_font_ncenB10_tr, 35, 10);
     while (1);
   }
+  Serial.println("IMU Calibiration start!");
+  displayTwoLines("IMU Calibiration", "start!", u8g2_font_ncenB10_tr, 10, 20);
+  delay(2000);
   calibrateIMU();
   Serial.println("IMU calibration complete.");  
   displayTwoLines("IMU calibration", "complete.", u8g2_font_ncenB10_tr, 10, 20);
@@ -149,7 +155,7 @@ void setup() {
   displayTwoLines("BARO sensor", "initialized!", u8g2_font_ncenB10_tr, 15, 25);
   delay(2000);
 
-  // SD Init
+  // Baro Init
   displayTwoLines("BARO sensor", "initialized!", u8g2_font_ncenB10_tr, 15, 25);
   delay(2000);
 
@@ -162,7 +168,7 @@ void setup() {
   displayTwoLines("GPS started", "successfully!", u8g2_font_ncenB10_tr, 21, 20);
   delay(2000);
   // waiting to get the munimum gps sat count, max wait 30 sec
-  waitForGPSLock();
+  waitForGPSLock();  // comment while debuging 
 
 
   if (!SD.begin(chipSelect)) {
@@ -174,25 +180,16 @@ void setup() {
   displayTwoLines("SD card initialized", "successfully!", u8g2_font_6x10_tr, 8, 25);
   delay(2000);
 
-
   updateGPSData();
-  filename = generateFilename();
+  generateFilename();
 
   displayTwoLines("Ready to", "start!", u8g2_font_ncenB10_tr, 35, 45);
   delay(2000);
   displayToScreen("Team 1", 30, 35);
 
-  // // Remove old log file
-  // if (SD.exists(filename)) {
-  //   SD.remove(filename);
-  //   Serial.println("Removed old log file.");
-  //   delay(2000);
-  // }
-
-
   // Wait for button to start logging
   bool toggle = false;
-  while (!buttonReleased()) {
+  while (!buttonInterruptFlag) {
     updateBatteryVoltage();
 
     if (batteryVoltage <= BAT_VLOW) {
@@ -226,12 +223,13 @@ void setup() {
         }
 
         toggle = !toggle;
-        digitalWrite(PIN_LED_GREEN, toggle);  // Blink green LED
+        digitalWrite(PIN_LED_GREEN, HIGH);  // Blink green LED
         digitalWrite(PIN_LED_RED, LOW);       // Red LED off when voltage is fine
+        digitalWrite(PIN_LED_BLUE, toggle);       // Red LED off when voltage is fine
       }
     }
   }
-  startLog();  // Start logging after button press
+
 }
 
 void loop() {
@@ -240,7 +238,7 @@ void loop() {
   updateGPSData();
   updateLogging();
   logToSD();
-  
+  //printIMUOffsetsAndReadings();
   // displayToScreen();
   // readNextLineFromSD();
   //delay(1000); // 1Hz logging rate will be removed later!
@@ -250,7 +248,7 @@ void loop() {
   if (millis() - lastDisplaySwitch > 2000) {    // Check if 2000 ms (2 seconds) have passed since last display change
     lastDisplaySwitch = millis();               // Reset the timer
 
-    displayState = (displayState + 1) % 3;      // Move to next state (0 -> 1 -> 2 -> 0)
+    displayState = (displayState + 1) % 4;      // Move to next state (0 -> 1 -> 2 -> 0)
 
     switch (displayState) {
       case 0: {     // Display team
@@ -269,6 +267,12 @@ void loop() {
         displayTwoLines("Satellites:", String(SatCount).c_str(), u8g2_font_ncenB10_tr, 28, 60);
         break;
       }
+
+      case 3: {// promte the user to start logging
+        const char* logStateStr = (logState == LogState::IDLE) ? "IDLE" : "Logging";
+        displayTwoLines("Logging State:", logStateStr, u8g2_font_ncenB10_tr, 10, 30);
+        break;
+      }
     }
   }
 
@@ -277,10 +281,7 @@ void loop() {
 }
 
 // === IMU Data Update ===
-void updateIMUData() {
-  float preAccX, preAccY, preAccZ;
-  float preGyroX, preGyroY, preGyroZ;
-  
+void updateIMUData() {  
   if (IMU.accelerationAvailable()) {
     IMU.readAcceleration(preAccX, preAccY, preAccZ);
     accX = preAccX - accX_off;
@@ -298,81 +299,6 @@ void updateIMUData() {
   }
 }
 
-// === IMU Calibration ===
-void calibrateIMU() {
-  const int CALIB_SAMPLES = 25;
-  float temp;
-  float accXCalibBuffer[CALIB_SAMPLES];
-  float accYCalibBuffer[CALIB_SAMPLES];  
-  float accZCalibBuffer[CALIB_SAMPLES];
-  float gyroXCalibBuffer[CALIB_SAMPLES];
-  float gyroYCalibBuffer[CALIB_SAMPLES];
-  float gyroZCalibBuffer[CALIB_SAMPLES];
-
-  for (int i = 0;  i < CALIB_SAMPLES; i++) {
-    // Waits until all data is ready for collection
-    while (!IMU.accelerationAvailable() || !IMU.gyroscopeAvailable()) {
-      delay(1);          // sleep to avoid a busy-loop
-    }
-
-    IMU.readAcceleration(accX, accY, accZ);
-    IMU.readGyroscope(gyroX, gyroY, gyroZ);
-
-    // Store the values 
-    accXCalibBuffer[i] = accX;  accYCalibBuffer[i] = accY;  accZCalibBuffer[i] = accZ;  
-    gyroXCalibBuffer[i] = gyroX; gyroYCalibBuffer[i] = gyroY;  gyroZCalibBuffer[i] = gyroZ; 
-
-    // Accelerometer and gyrospcope output data rate is fixed at 99.84 Hz (10ms)
-    delay(11);
-  }
-    
-  // Bubble Sorting to find the Median (for each sensor)
-  for (int i = 0; i < CALIB_SAMPLES - 1; i++) {
-    for (int j = 0; j < CALIB_SAMPLES - i - 1; j++) {
-      // accX
-      if (accXCalibBuffer[j] > accXCalibBuffer[j + 1]) {
-        temp = accXCalibBuffer[j];
-        accXCalibBuffer[j] = accXCalibBuffer[j + 1];
-        accXCalibBuffer[j + 1] = temp;
-      }
-      // accY
-      if (accYCalibBuffer[j] > accYCalibBuffer[j + 1]) {
-        temp = accYCalibBuffer[j];
-        accYCalibBuffer[j] = accYCalibBuffer[j + 1];
-        accYCalibBuffer[j + 1] = temp;
-      }
-      // accZ
-      if (accZCalibBuffer[j] > accZCalibBuffer[j + 1]) {
-        temp = accZCalibBuffer[j];
-        accZCalibBuffer[j] = accZCalibBuffer[j + 1];
-        accZCalibBuffer[j + 1] = temp;
-      }
-      // gyroX
-      if (gyroXCalibBuffer[j] > gyroXCalibBuffer[j + 1]) {
-        temp = gyroXCalibBuffer[j];
-        gyroXCalibBuffer[j] = gyroXCalibBuffer[j + 1];
-        gyroXCalibBuffer[j + 1] = temp;
-      }
-      // gyroY
-      if (gyroYCalibBuffer[j] > gyroYCalibBuffer[j + 1]) {
-        temp = gyroYCalibBuffer[j];
-        gyroYCalibBuffer[j] = gyroYCalibBuffer[j + 1];
-        gyroYCalibBuffer[j + 1] = temp;
-      }
-      // gyroZ
-      if (gyroZCalibBuffer[j] > gyroZCalibBuffer[j + 1]) {
-        temp = gyroZCalibBuffer[j];
-        gyroZCalibBuffer[j] = gyroZCalibBuffer[j + 1];
-        gyroZCalibBuffer[j + 1] = temp;
-      }
-    }
-  }
-
-  // Calculate the offsets
-  int middle = CALIB_SAMPLES / 2;
-  accX_off = accXCalibBuffer[middle];  accY_off = accYCalibBuffer[middle];  accZ_off = accZCalibBuffer[middle] - 1;
-  gyroX_off = gyroXCalibBuffer[middle];  gyroY_off = gyroYCalibBuffer[middle];  gyroZ_off = gyroZCalibBuffer[middle];
-}
 
 // === Barometer Data Update ===
 void updateBarometerData() {
@@ -434,7 +360,7 @@ void updateGPSData() {
       char c = Serial1.read();
 
       // Print raw NMEA sentence
-      Serial.write(c);
+      //Serial.write(c);
 
       // Feed to TinyGPS parser
       gps.encode(c);
@@ -487,27 +413,34 @@ void checkBattery(){
   }
 }
 
-// === Check if button is pressed and released ===
-bool buttonReleased() {
-  reading = digitalRead(PIN_BUTTON);
-  // Serial.println(lastStableState);
-  // Serial.println(lastEdge);
+// // === Check if button is pressed and released ===
+// bool buttonReleased() {
+//   reading = digitalRead(PIN_BUTTON);
+//   // Serial.println(lastStableState);
+//   // Serial.println(lastEdge);
 
-  if (reading != lastStableState && (millis() - lastEdge) > DEBOUNCE_MS) {
+//   if (reading != lastStableState && (millis() - lastEdge) > DEBOUNCE_MS) {
+//     lastEdge = millis();
+//     if (lastStableState == LOW && reading == HIGH) {
+//       lastStableState = reading;
+//       Serial.println("Button Pressed. logging starting...");
+//       return true; // button pressed
+//     }
+//     lastStableState = reading;
+//   }  
+//   return false;
+// }
+// interuupt servive routine to set the flag button pressed! if the press happened (falling edge) > 200 ms , button is active
+void onButtonPress() { 
+  if (millis() - lastEdge > DEBOUNCE_MS) {
+    buttonInterruptFlag = true;
     lastEdge = millis();
-    if (lastStableState == LOW && reading == HIGH) {
-      lastStableState = reading;
-      Serial.println("Button Pressed. logging starting...");
-      return true; // button pressed
-    }
-    lastStableState = reading;
-  }  
-  return false;
+  }
 }
 
 String generateDataLine() {
   String line = "";
-  line += String(timestamp) + ",";
+  line += String(millis()) + ",";
   line += String(accX) + ",";
   line += String(accY) + ",";
   line += String(accZ) + ",";
@@ -596,64 +529,67 @@ void stopLog(){
     dataFile.flush();
     dataFile.close();
     Serial.println("File closed");
+    Serial.println("Stopped data logging");
+    displayTwoLines("File closed", "log Stopped!", u8g2_font_ncenB10_tr, 15, 40);
+    delay(2000);
+
   }else{
     Serial.println("File wasn't open");
+    displayTwoLines("Error", "File wasn't open!", u8g2_font_ncenB10_tr, 15, 40);
+    delay(2000);
+
   }
   logState = LogState::IDLE;
-  Serial.println("Stopped data logging");
 }
 
 // === Updates data logging ===
 void updateLogging(){
-  if(buttonReleased() && logState == LogState::IDLE){
-    startLog();
-  }else if(buttonReleased() && logState == LogState::ACTIVE){
-    stopLog();
-  }
-}  
+  if (buttonInterruptFlag) {
+    buttonInterruptFlag = false; // Reset the flag
 
-String generateFilename() {
+    if (logState == LogState::IDLE) {
+      startLog();
+    } else if (logState == LogState::ACTIVE) {
+      stopLog();
+    }
+  }
+}
+
+void generateFilename() {
   timestamp = millis();
 
-  if (gps.date.isValid() && gps.time.isValid()) {
-    // Compose date/time string: YYYYMMDD_HHMMSS
-    char datetime[20];
-    snprintf(datetime, sizeof(datetime), "%04d%02d%02d_%02d%02d%02d",
-             gps.date.year(),
-             gps.date.month(),
-             gps.date.day(),
-             gps.time.hour(),
-             gps.time.minute(),
-             gps.time.second());
-
-    filename = "Team_" + String(TEAM_NUMBER) + "_" + String(datetime) + "_log.csv";
-
-    Serial.print("✅ Using GPS datetime for log: ");
-    Serial.println(filename);
-
-    // Show "Using GPS time" and datetime in two lines for 2 seconds
-    displayToScreen("Using GPS time!", 25, 35);
+ if (gps.date.isValid() && gps.time.isValid()) {
+    Serial.print("Using GPS for session log ");
+    displayTwoLines("Using GPS", "for session log", u8g2_font_ncenB10_tr, 10, 10);
     delay(2000);
     
-    displayTwoLines("session_ID:", datetime, u8g2_font_ncenB10_tr, 15, 15);
+    // Format: T<team><day><month><hour>.CSV → 8 chars before .CSV T0119083.csv team 01 day 19 month 08, hour (3 or 13)
+    snprintf(filename, sizeof(filename), "T%02d%02d%02d%01d.CSV",
+             TEAM_NUMBER,
+             gps.date.day(),
+             gps.date.month(),
+             gps.time.minute() % 10);  // Only 1 digit for hour
+
+    Serial.println(filename);
+    
+    displayTwoLines("session_ID:", filename, u8g2_font_ncenB10_tr, 15, 15);
     delay(2000);
 
   } else {
-    Serial.println("⚠️ No GPS time available!");
-    filename = "Team_" + String(TEAM_NUMBER) + "_" + String(timestamp) + "_log.csv";
-
-    // First message: "No GPS time!" alone for 2 seconds
-    displayToScreen("No GPS time!", 25, 35);
+    Serial.println("No GPS time available!");
+    displayTwoLines("No GPS time", "available!", u8g2_font_ncenB10_tr, 10, 10);
     delay(2000);
 
-    // Second message: "Using session id:" then session ID for 2 seconds
-    char idBuf[30];
-    snprintf(idBuf, sizeof(idBuf), "Session ID: %lu", timestamp);
-    displayTwoLines("Using session id:", idBuf, u8g2_font_ncenB10_tr, 10, 10);
+    displayTwoLines("Using timeStamp", "for session log", u8g2_font_ncenB10_tr, 10, 10);
     delay(2000);
+    
+    unsigned long ts = timestamp % 10000;
+    snprintf(filename, sizeof(filename), "T%02d_%04lu.CSV", TEAM_NUMBER, ts);
+
+    displayTwoLines("session_ID:", filename, u8g2_font_ncenB10_tr, 15, 15);
+    delay(2000);
+    Serial.println(filename);
   }
-
-  return filename;
 }
 
 
@@ -674,11 +610,14 @@ void waitForGPSLock() {
 
     if (SatCount >= MIN_SATS_REQUIRED && gps.date.isValid() && gps.time.isValid()) {
       locked = true;
+      updateGPSData();
+      displayTwoLines("Waiting for GPS", satMsg, u8g2_font_ncenB10_tr, 15, 30);
       break;  // Good GPS fix, break early
     }
 
     delay(1000);  // Check every 1 second
   }
+  delay(1000);  // Check every 1 second
 
   if (!locked) {
     // Timeout reached without lock
@@ -696,4 +635,105 @@ void waitForGPSLock() {
     displayTwoLines("GPS Lock", "acquired!", u8g2_font_ncenB10_tr, 30, 40);
     delay(2000);
   }
+}
+
+
+
+// === IMU Calibration ===
+void calibrateIMU() {
+  const int CALIB_SAMPLES = 100;
+  float temp;
+  float accXCalibBuffer[CALIB_SAMPLES];
+  float accYCalibBuffer[CALIB_SAMPLES];  
+  float accZCalibBuffer[CALIB_SAMPLES];
+  float gyroXCalibBuffer[CALIB_SAMPLES];
+  float gyroYCalibBuffer[CALIB_SAMPLES];
+  float gyroZCalibBuffer[CALIB_SAMPLES];
+
+  for (int i = 0;  i < CALIB_SAMPLES; i++) {
+    // Waits until all data is ready for collection
+    while (!IMU.accelerationAvailable() || !IMU.gyroscopeAvailable()) {
+      delay(1);          // sleep to avoid a busy-loop
+    }
+
+    IMU.readAcceleration(accX, accY, accZ);
+    IMU.readGyroscope(gyroX, gyroY, gyroZ);
+
+    // Store the values 
+    accXCalibBuffer[i] = accX;  accYCalibBuffer[i] = accY;  accZCalibBuffer[i] = accZ;  
+    gyroXCalibBuffer[i] = gyroX; gyroYCalibBuffer[i] = gyroY;  gyroZCalibBuffer[i] = gyroZ; 
+
+    // Accelerometer and gyrospcope output data rate is fixed at 99.84 Hz (10ms)
+    delay(11);
+  }
+    
+  // Bubble Sorting to find the Median (for each sensor)
+  for (int i = 0; i < CALIB_SAMPLES - 1; i++) {
+    for (int j = 0; j < CALIB_SAMPLES - i - 1; j++) {
+      // accX
+      if (accXCalibBuffer[j] > accXCalibBuffer[j + 1]) {
+        temp = accXCalibBuffer[j];
+        accXCalibBuffer[j] = accXCalibBuffer[j + 1];
+        accXCalibBuffer[j + 1] = temp;
+      }
+      // accY
+      if (accYCalibBuffer[j] > accYCalibBuffer[j + 1]) {
+        temp = accYCalibBuffer[j];
+        accYCalibBuffer[j] = accYCalibBuffer[j + 1];
+        accYCalibBuffer[j + 1] = temp;
+      }
+      // accZ
+      if (accZCalibBuffer[j] > accZCalibBuffer[j + 1]) {
+        temp = accZCalibBuffer[j];
+        accZCalibBuffer[j] = accZCalibBuffer[j + 1];
+        accZCalibBuffer[j + 1] = temp;
+      }
+      // gyroX
+      if (gyroXCalibBuffer[j] > gyroXCalibBuffer[j + 1]) {
+        temp = gyroXCalibBuffer[j];
+        gyroXCalibBuffer[j] = gyroXCalibBuffer[j + 1];
+        gyroXCalibBuffer[j + 1] = temp;
+      }
+      // gyroY
+      if (gyroYCalibBuffer[j] > gyroYCalibBuffer[j + 1]) {
+        temp = gyroYCalibBuffer[j];
+        gyroYCalibBuffer[j] = gyroYCalibBuffer[j + 1];
+        gyroYCalibBuffer[j + 1] = temp;
+      }
+      // gyroZ
+      if (gyroZCalibBuffer[j] > gyroZCalibBuffer[j + 1]) {
+        temp = gyroZCalibBuffer[j];
+        gyroZCalibBuffer[j] = gyroZCalibBuffer[j + 1];
+        gyroZCalibBuffer[j + 1] = temp;
+      }
+    }
+  }
+
+  // Calculate the offsets
+  int middle = CALIB_SAMPLES / 2;
+  accX_off = accXCalibBuffer[middle];  accY_off = accYCalibBuffer[middle];  accZ_off = accZCalibBuffer[middle] - 1;
+  gyroX_off = gyroXCalibBuffer[middle];  gyroY_off = gyroYCalibBuffer[middle];  gyroZ_off = gyroZCalibBuffer[middle];
+
+  printIMUOffsetsAndReadings();
+}
+
+
+void printIMUOffsetsAndReadings() {
+  Serial.println("=== IMU Offsets ===");
+  Serial.print("accX_off: "); Serial.print(accX_off);
+  Serial.print(", accY_off: "); Serial.print(accY_off);
+  Serial.print(", accZ_off: "); Serial.println(accZ_off);
+
+  Serial.print("gyroX_off: "); Serial.print(gyroX_off);
+  Serial.print(", gyroY_off: "); Serial.print(gyroY_off);
+  Serial.print(", gyroZ_off: "); Serial.println(gyroZ_off);
+
+  Serial.println("=== IMU Readings ===");
+  Serial.print("accX: "); Serial.print(accX);
+  Serial.print(", accY: "); Serial.print(accY);
+  Serial.print(", accZ: "); Serial.println(accZ);
+
+  Serial.print("gyroX: "); Serial.print(gyroX);
+  Serial.print(", gyroY: "); Serial.print(gyroY);
+  Serial.print(", gyroZ: "); Serial.println(gyroZ);
 }
