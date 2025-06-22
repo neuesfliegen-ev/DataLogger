@@ -302,16 +302,19 @@ void updateIMUData() {
 void calibrateIMU() {
   const int CALIB_SAMPLES = 25;
   float temp;
-  float accXCalibBuffer[CALIB_SAMPLE_COUNT];
-  float accYCalibBuffer[CALIB_SAMPLE_COUNT];  
-  float accZCalibBuffer[CALIB_SAMPLE_COUNT];
-  float gyroXCalibBuffer[CALIB_SAMPLE_COUNT];
-  float gyroYCalibBuffer[CALIB_SAMPLE_COUNT];
-  float gyroZCalibBuffer[CALIB_SAMPLE_COUNT];
+  float accXCalibBuffer[CALIB_SAMPLES];
+  float accYCalibBuffer[CALIB_SAMPLES];  
+  float accZCalibBuffer[CALIB_SAMPLES];
+  float gyroXCalibBuffer[CALIB_SAMPLES];
+  float gyroYCalibBuffer[CALIB_SAMPLES];
+  float gyroZCalibBuffer[CALIB_SAMPLES];
 
   for (int i = 0;  i < CALIB_SAMPLES; i++) {
     // Waits until all data is ready for collection
-    while(!IMU.accelerationAvailable() || !IMU.gyroscocpeAvailable()));
+    while (!IMU.accelerationAvailable() || !IMU.gyroscopeAvailable()) {
+      delay(1);          // sleep to avoid a busy-loop
+    }
+
     IMU.readAcceleration(accX, accY, accZ);
     IMU.readGyroscope(gyroX, gyroY, gyroZ);
 
@@ -324,8 +327,8 @@ void calibrateIMU() {
   }
     
   // Bubble Sorting to find the Median (for each sensor)
-  for (int i = 0; i < CALIB_SAMPLE_COUNT - 1; i++) {
-    for (int j = 0; j < CALIB_SAMPLE_COUNT - i - 1; j++) {
+  for (int i = 0; i < CALIB_SAMPLES - 1; i++) {
+    for (int j = 0; j < CALIB_SAMPLES - i - 1; j++) {
       // accX
       if (accXCalibBuffer[j] > accXCalibBuffer[j + 1]) {
         temp = accXCalibBuffer[j];
@@ -363,12 +366,12 @@ void calibrateIMU() {
         gyroZCalibBuffer[j + 1] = temp;
       }
     }
-
-   // Calculate the offsets
-   int middle = CALIB_SAMPLES / 2;
-   accX_off = accXCalibBuffer[middle];  accY_off = accYCalibBuffer[middle];  accZ_off = accZCalibBuffer[middle] - 1;
-   gyroX_off = gyroXCalibBuffer[middle];  gyroY_off = gyroYCalibBuffer[middle];  gyroZ_off = gyroZCalibBuffer[middle];
   }
+
+  // Calculate the offsets
+  int middle = CALIB_SAMPLES / 2;
+  accX_off = accXCalibBuffer[middle];  accY_off = accYCalibBuffer[middle];  accZ_off = accZCalibBuffer[middle] - 1;
+  gyroX_off = gyroXCalibBuffer[middle];  gyroY_off = gyroYCalibBuffer[middle];  gyroZ_off = gyroZCalibBuffer[middle];
 }
 
 // === Barometer Data Update ===
