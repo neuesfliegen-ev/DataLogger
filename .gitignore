@@ -1,0 +1,13 @@
+# --- Visual Studio / Rider / VS Code temp files ------------------------
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+.vscode/
+
+# Solution caches
+slnx.sqlite
+*.db
+ProjectSettings.json
+VSWorkspaceState.json
