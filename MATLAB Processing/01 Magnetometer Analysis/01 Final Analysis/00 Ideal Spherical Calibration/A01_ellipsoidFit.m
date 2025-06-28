@@ -10,7 +10,7 @@ function [b, C] = A01_ellipsoidFit(X, Y, Z)
         2*X.*Y , 2*X.*Z , 2*Y.*Z , ...
         2*X    , 2*Y    , 2*Z    ];
 
-  % right–hand side = ones
+  % vector of ones in the right–hand side 
   rhs = ones(size(X));
 
   % solve D * v = rhs in least squares sense
@@ -29,6 +29,7 @@ function [b, C] = A01_ellipsoidFit(X, Y, Z)
 
   % find the center b by solving grad = 0:
   center = -M(1:3,1:3) \ [G; H; I];
+  b = center;
 
   % translate to center the ellipsoid
   T = eye(4);
@@ -40,7 +41,5 @@ function [b, C] = A01_ellipsoidFit(X, Y, Z)
 
   % the correction matrix is the inverse square‐root of R3
   [U,S] = svd(R3);
-  C = U * sqrt(S) * U';  
-
-  b = center;
+  C = U * sqrt(S) * U';
 end

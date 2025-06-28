@@ -1,12 +1,9 @@
 IMU calibration complete.
 IMU initialized successfully!
-BARO sensor initialized!
-Failed to initialize SD card.
-SD card initialized successfully!
 Ready to start!!
 Waiting for button to start logging...
-Button Pressed. logging starting...
-Error opening file for logging.
+New Logging is starting!
+
 magX,magY,magZ
 
 -19.00,-11.00,28.00
