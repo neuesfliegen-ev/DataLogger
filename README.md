@@ -30,7 +30,7 @@ This project is a **Flight Data Logger** designed for UAVs and model aircrafts. 
 ## 🔧 Circuit Diagram
 needs to replace resistor 430 with 510 ohms
 
-[Wiring diagram](Datenlogger_Files/Datalogger_schematic v2.pdf)
+[Wiring diagram](Datenlogger_Files/Datalogger_schematic%20v2.pdf)
 
 ---
 
