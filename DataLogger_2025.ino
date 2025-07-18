@@ -83,7 +83,7 @@ float gyroX_off = 0, gyroY_off = 0, gyroZ_off = 0;
 float magX_off  = 0, magY_off  = 0, magZ_off  = 0;
 float preAccX, preAccY, preAccZ = 0;
 float preGyroX, preGyroY, preGyroZ = 0;
-float preMagX, preMagY, preMagZ
+float preMagX, preMagY, preMagZ;
 
 
 
