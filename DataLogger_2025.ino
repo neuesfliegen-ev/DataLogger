@@ -77,14 +77,15 @@ const unsigned long WRITE_INTERVAL = 1000;  // Write to SD every 1 sec
 const unsigned long FLUSH_INTERVAL = 10000;  // Flush SD every 5 sec
 String dataBuffer = ""; // Buffer for batching data
 
-// === Calibration Variables ===
-float accX_off  = 0, accY_off  = 0, accZ_off  = 0;
-float gyroX_off = 0, gyroY_off = 0, gyroZ_off = 0;
-float magX_off  = 0, magY_off  = 0, magZ_off  = 0;
-float preAccX, preAccY, preAccZ = 0;
-float preGyroX, preGyroY, preGyroZ = 0;
-float preMagX, preMagY, preMagZ;
+// SIM7600 UART
+#define SIM Serial1
 
+// SIM7600 APN and Server Info
+const char* APN = "internet";  // or your SIM provider's APN, e.g., "web.vodafone.de"
+const char* SERVER = "datalogger-production.up.railway.app";
+const int PORT = 8000;
+const char* ENDPOINT = "/flight-data";
+unsigned long timeout = 5000;
 
 
 // === Function Declarations ===
@@ -93,20 +94,24 @@ void displayTwoLines(const char line1[], const char line2[], const uint8_t* font
 void updateIMUData();
 void updateBarometerData();
 String generateDataLine();
+String generateJSON();
 void logToSD();
-void calibrateIMU(); 
-void calibrateIMU2();
+
 void generateFilename(); 
 void readNextLineFromSD();
 
 // button logic and voltage divider!
-bool buttonReleased();
+//bool buttonReleased();
 void updateBatteryVoltage();
 void checkBattery();
 void startLog();
 void stopLog();
 void updateLogging(); // starts logging at button *release*
-void printIMUOffsetsAndReadings();
+
+// sim methods 
+bool initSIM7600();
+bool sendCommand(String cmd, String expected);
+
 
 void setup() {
   Serial.begin(9600);    // USB serial for debug
@@ -136,8 +141,6 @@ void setup() {
     displayTwoLines("Failed to", "initialize IMU.", u8g2_font_ncenB10_tr, 35, 10);
     while (1);
   }
-  
-  delay(2000);  // Remove once we make sure an ISR cant interrupt it.
   Serial.println("IMU initialized successfully!");
   displayTwoLines("IMU initialized", "successfully!", u8g2_font_ncenB10_tr, 10, 20);
   delay(2000);
@@ -157,16 +160,30 @@ void setup() {
   displayTwoLines("BARO sensor", "initialized!", u8g2_font_ncenB10_tr, 15, 25);
   delay(2000);
 
-  // GPS module on Serial1 (D0 = RX, D1 = TX)
+  // // GPS module on Serial1 (D0 = RX, D1 = TX)
+  // //Serial.println("🔍 Starting GPS reader ..."); 
+  // displayTwoLines("Initializing", "GPS reader...", u8g2_font_ncenB10_tr, 25, 15);
+  // Serial1.begin(115200); 
+  // while (!Serial1);
+  // delay(2000);
+  // displayTwoLines("GPS started", "successfully!", u8g2_font_ncenB10_tr, 21, 20);
+  // delay(2000);
+  // // waiting to get the munimum gps sat count, max wait 30 sec
+  //waitForGPSLock();  // comment while debuging 
+
   //Serial.println("🔍 Starting GPS reader ..."); 
-  displayTwoLines("Initializing", "GPS reader...", u8g2_font_ncenB10_tr, 25, 15);
-  Serial1.begin(115200); 
-  while (!Serial1);
+  displayTwoLines("Initializing", "Sim Module", u8g2_font_ncenB10_tr, 25, 15);
   delay(2000);
-  displayTwoLines("GPS started", "successfully!", u8g2_font_ncenB10_tr, 21, 20);
+  SIM.begin(115200);
+  while (!SIM);
+  if (!initSIM7600()) {
+    Serial.println("❌ SIM7600 init failed");
+    displayTwoLines("SIM7600 init", "failed!", u8g2_font_ncenB10_tr, 21, 20);
+    while (true);
+  }
+  Serial.println("✅ SIM7600 ready");
+  displayTwoLines("SIM7600 started", "successfully!", u8g2_font_ncenB10_tr, 21, 20);
   delay(2000);
-  // waiting to get the munimum gps sat count, max wait 30 sec
-  waitForGPSLock();  // comment while debuging 
 
 
   if (!SD.begin(chipSelect)) {
@@ -178,30 +195,15 @@ void setup() {
   displayTwoLines("SD card initialized", "successfully!", u8g2_font_6x10_tr, 8, 25);
   delay(2000);
 
-  updateGPSData();
+  //updateGPSData();
   generateFilename();
-
-  Serial.println("Start IMU Calibration? Press button");
-  displayTwoLines("Start Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
-
-  while(!buttonInterruptFlag) {
-    yield();    // Nano BLE 33, RTOS native instructions. Doesn't starve the processor with delay(500) and ensures proper waiting of the button pressed (even though our current button doesnt have that problem).
-  }
-
-  calibrateIMU();
-  calibrateIMU2();
-
-  Serial.println("IMU calibration complete.");  
-  displayTwoLines("IMU calibration", "complete.", u8g2_font_ncenB10_tr, 10, 20);
 
   displayTwoLines("Ready to", "start!", u8g2_font_ncenB10_tr, 35, 45);
   delay(2000);
-  
   displayToScreen("Team 1", 30, 35);
 
   // Wait for button to start logging
   bool toggle = false;
-  buttonInterruptFlag = false;
   while (!buttonInterruptFlag) {
     updateBatteryVoltage();
 
@@ -248,10 +250,18 @@ void setup() {
 void loop() {
   updateIMUData();
   updateBarometerData();
-  updateGPSData();
+  //updateGPSData();
   updateLogging();
   logToSD();
-  //printIMUOffsetsAndReadings();
+  
+  if (logState == LogState::ACTIVE) {
+    String jsonData = generateJSON();
+    if (!sendDataHTTP(jsonData)) {
+      Serial.println("❌ Failed to send HTTP POST. Trying again...");
+      delay(3000);
+    }
+  }
+ 
   // displayToScreen();
   // readNextLineFromSD();
   //delay(1000); // 1Hz logging rate will be removed later!
@@ -294,26 +304,17 @@ void loop() {
 }
 
 // === IMU Data Update ===
-void updateIMUData() {  
+void updateIMUData() {
   if (IMU.accelerationAvailable()) {
-    IMU.readAcceleration(preAccX, preAccY, preAccZ);
-    accX = preAccX - accX_off;
-    accY = preAccY - accY_off;
-    accZ = preAccZ - accZ_off;
+    IMU.readAcceleration(accX, accY, accZ);
   }
   if (IMU.gyroscopeAvailable()) {
-    IMU.readGyroscope(preGyroX, preGyroY, preGyroZ);
-    gyroX = preGyroX - gyroX_off;
-    gyroY = preGyroY - gyroY_off;
-    gyroZ = preGyroZ - gyroZ_off;
+    IMU.readGyroscope(gyroX, gyroY, gyroZ);
   }
   if (IMU.magneticFieldAvailable()) {
-    IMU.readMagneticField(preMagX, preMagY, preMagZ);
-    magX = preMagX - magX_off;
-    magY = preMagY - magY_off;
+    IMU.readMagneticField(magX, magY, magZ);
   }
 }
-
 
 // === Barometer Data Update ===
 void updateBarometerData() {
@@ -375,7 +376,7 @@ void updateGPSData() {
       char c = Serial1.read();
 
       // Print raw NMEA sentence
-      //Serial.write(c);
+      Serial.write(c);
 
       // Feed to TinyGPS parser
       gps.encode(c);
@@ -583,7 +584,7 @@ void generateFilename() {
              TEAM_NUMBER,
              gps.date.day(),
              gps.date.month(),
-             gps.time.minute() % 10);  // Only 1 digit for hour
+             gps.time.hour() % 10);  // Only 1 digit for hour
 
     Serial.println(filename);
     
@@ -625,14 +626,11 @@ void waitForGPSLock() {
 
     if (SatCount >= MIN_SATS_REQUIRED && gps.date.isValid() && gps.time.isValid()) {
       locked = true;
-      updateGPSData();
-      displayTwoLines("Waiting for GPS", satMsg, u8g2_font_ncenB10_tr, 15, 30);
       break;  // Good GPS fix, break early
     }
 
     delay(1000);  // Check every 1 second
   }
-  delay(1000);  // Check every 1 second
 
   if (!locked) {
     // Timeout reached without lock
@@ -652,155 +650,91 @@ void waitForGPSLock() {
   }
 }
 
-
-
-// === IMU Calibration (Accelerometer and Gyroscope) ===
-void calibrateIMU() {
-  const int CALIB_SAMPLES = 100;
-  float temp;
-  float accXCalibBuffer[CALIB_SAMPLES];
-  float accYCalibBuffer[CALIB_SAMPLES];  
-  float accZCalibBuffer[CALIB_SAMPLES];
-  float gyroXCalibBuffer[CALIB_SAMPLES];
-  float gyroYCalibBuffer[CALIB_SAMPLES];
-  float gyroZCalibBuffer[CALIB_SAMPLES];
-
-  for (int i = 0;  i < CALIB_SAMPLES; i++) {
-    // Waits until all data is ready for collection
-    while (!IMU.accelerationAvailable() || !IMU.gyroscopeAvailable()) {
-      yield();
-    }
-
-    IMU.readAcceleration(accX, accY, accZ);
-    IMU.readGyroscope(gyroX, gyroY, gyroZ);
-
-    // Store the values 
-    accXCalibBuffer[i] = accX;  accYCalibBuffer[i] = accY;  accZCalibBuffer[i] = accZ;  
-    gyroXCalibBuffer[i] = gyroX; gyroYCalibBuffer[i] = gyroY;  gyroZCalibBuffer[i] = gyroZ; 
-
-    // Accelerometer and gyrospcope output data rate is fixed at 99.84 Hz (10ms)
-    delay(11); // CHANGE THIS USING YIELD
-  }
-    
-  // Bubble Sorting to find the Median (for each sensor)
-  for (int i = 0; i < CALIB_SAMPLES - 1; i++) {
-    for (int j = 0; j < CALIB_SAMPLES - i - 1; j++) {
-      // accX
-      if (accXCalibBuffer[j] > accXCalibBuffer[j + 1]) {
-        temp = accXCalibBuffer[j];
-        accXCalibBuffer[j] = accXCalibBuffer[j + 1];
-        accXCalibBuffer[j + 1] = temp;
-      }
-      // accY
-      if (accYCalibBuffer[j] > accYCalibBuffer[j + 1]) {
-        temp = accYCalibBuffer[j];
-        accYCalibBuffer[j] = accYCalibBuffer[j + 1];
-        accYCalibBuffer[j + 1] = temp;
-      }
-      // accZ
-      if (accZCalibBuffer[j] > accZCalibBuffer[j + 1]) {
-        temp = accZCalibBuffer[j];
-        accZCalibBuffer[j] = accZCalibBuffer[j + 1];
-        accZCalibBuffer[j + 1] = temp;
-      }
-      // gyroX
-      if (gyroXCalibBuffer[j] > gyroXCalibBuffer[j + 1]) {
-        temp = gyroXCalibBuffer[j];
-        gyroXCalibBuffer[j] = gyroXCalibBuffer[j + 1];
-        gyroXCalibBuffer[j + 1] = temp;
-      }
-      // gyroY
-      if (gyroYCalibBuffer[j] > gyroYCalibBuffer[j + 1]) {
-        temp = gyroYCalibBuffer[j];
-        gyroYCalibBuffer[j] = gyroYCalibBuffer[j + 1];
-        gyroYCalibBuffer[j + 1] = temp;
-      }
-      // gyroZ
-      if (gyroZCalibBuffer[j] > gyroZCalibBuffer[j + 1]) {
-        temp = gyroZCalibBuffer[j];
-        gyroZCalibBuffer[j] = gyroZCalibBuffer[j + 1];
-        gyroZCalibBuffer[j + 1] = temp;
-      }
-    }
-  }
-
-  // Calculate the offsets
-  int middle = CALIB_SAMPLES / 2;
-  accX_off = accXCalibBuffer[middle];  accY_off = accYCalibBuffer[middle];  accZ_off = accZCalibBuffer[middle] - 1;
-  gyroX_off = gyroXCalibBuffer[middle];  gyroY_off = gyroYCalibBuffer[middle];  gyroZ_off = gyroZCalibBuffer[middle];
-
-  printIMUOffsetsAndReadings();
+String generateJSON() {
+  String json = "{";
+  json += "\"timestamp\":" + String(millis()) + ",";
+  json += "\"accX\":" + String(accX) + ",";
+  json += "\"accY\":" + String(accY) + ",";
+  json += "\"accZ\":" + String(accZ) + ",";
+  json += "\"gyroX\":" + String(gyroX) + ",";
+  json += "\"gyroY\":" + String(gyroY) + ",";
+  json += "\"gyroZ\":" + String(gyroZ) + ",";
+  json += "\"magX\":" + String(magX) + ",";
+  json += "\"magY\":" + String(magY) + ",";
+  json += "\"magZ\":" + String(magZ) + ",";
+  json += "\"latitude\":" + String(latitude, 6) + ",";
+  json += "\"longitude\":" + String(longitude, 6) + ",";
+  json += "\"gpsAltitude\":" + String(gpsAltitude) + ",";
+  json += "\"speed\":" + String(Speed) + ",";
+  json += "\"satCount\":" + String(SatCount) + ",";
+  json += "\"roll\":" + String(roll) + ",";
+  json += "\"pitch\":" + String(pitch) + ",";
+  json += "\"yaw\":" + String(yaw) + ",";
+  json += "\"pressure\":" + String(pressure) + ",";
+  json += "\"temperature\":" + String(temperature) + ",";
+  json += "\"paltitude\":" + String(paltitude);
+  json += "}";
+  return json;
 }
 
-// === IMU Calibration (Magnetometer) ===
-void calibrateIMU2() {
-  // Calculate this buffer depending on the maximum sampling rate + maximum calibration time that I will use.
-  const int MAGNET_CALIB_SAMPLES = 6000;   // Considering the max 100 Hz sampling rate and 60s of calibration (far beyond the needed, probably)
-
-  // It would be slightly better to have "float" buffers, but make sure of the IMU sampling rate. Two int16_t buffers take 23 kB (9% of RAM) temporarily.
-  int16_t magnXCalibBuffer[MAGNET_CALIB_SAMPLES];
-  int16_t magnYCalibBuffer[MAGNET_CALIB_SAMPLES];
-  //float magnZCalibBuffer[MAGNET_CALIB_SAMPLES]; // Probably not needed. Only if Six-Axis Calibration method is used.
-
-  Serial.println("END Calibration? Press button");
-  displayTwoLines("END Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
-
-  int j = 0;
-  buttonInterruptFlag = false;
-  while(!buttonInterruptFlag && j < MAGNET_CALIB_SAMPLES) {
-    while (!IMU.magneticFieldAvailable()) {
-      yield();
+bool sendCommand(String cmd, String expected) {
+  SIM.println(cmd);
+  unsigned long start = millis();
+  String response = "";
+  while (millis() - start < timeout) {
+    while (SIM.available()) {
+      char c = SIM.read();
+      response += c;
     }
+    if (response.indexOf(expected) != -1) {
+      return true;
+    }
+  }
+  Serial.println("\u26a0\ufe0f AT Command Failed: " + cmd);
+  Serial.println("Response: " + response);
+  return false;
+}
 
-    IMU.readMagneticField(magX, magY, magZ);
+bool initSIM7600() {
+  return sendCommand("AT", "OK") &&
+         sendCommand("ATE0", "OK") &&
+         sendCommand("AT+CPIN?", "READY") &&
+         sendCommand("AT+CGATT=1", "OK") &&
+         sendCommand("AT+CIPSHUT", "SHUT OK") &&
+         sendCommand("AT+CSTT=\"" + String(APN) + "\"", "OK") &&
+         sendCommand("AT+CIICR", "OK") &&
+         sendCommand("AT+CIFSR", ".") &&
+         sendCommand("AT+SAPBR=3,1,\"Contype\",\"GPRS\"", "OK") &&
+         sendCommand("AT+SAPBR=3,1,\"APN\",\"" + String(APN) + "\"", "OK") &&
+         sendCommand("AT+SAPBR=1,1", "OK") &&
+         sendCommand("AT+SAPBR=2,1", "OK");
+}
 
-    magnXCalibBuffer[j] = magX;  magnYCalibBuffer[j] = magY;
-    j++;
+bool sendDataHTTP(String json) {
+  String url = "http://" + String(SERVER) + ":" + String(PORT) + String(ENDPOINT);
+
+  sendCommand("AT+HTTPTERM", "OK");
+  sendCommand("AT+HTTPINIT", "OK");
+  sendCommand("AT+HTTPPARA=\"CID\",1", "OK");
+  sendCommand("AT+HTTPPARA=\"URL\",\"" + url + "\"", "OK");
+  sendCommand("AT+HTTPPARA=\"CONTENT\",\"application/json\"", "OK");
+
+  sendCommand("AT+HTTPDATA=" + String(json.length()) + ",10000", "DOWNLOAD");
+  SIM.print(json);
+  delay(1000);
+
+  if (!sendCommand("AT+HTTPACTION=1", "+HTTPACTION:")) {
+    Serial.println("❌ HTTPACTION failed");
+    return false;
   }
 
-  // ADD CODE THAT MAKES SURE THAT THE INITIALIZATION WAS LONG ENOUGH AND THAT ALL POSITIVE AND NEGATIVE VALUES ARE RECORDED. ELSE, TRY AGAIN
-
-  // Find maximums and minimums. The other values will be necessary to double check correct initialization
-  int16_t xMin = magnXCalibBuffer[0];
-  int16_t xMax = xMin;
-  int16_t yMin = magnYCalibBuffer[0];
-  int16_t yMax = yMin;
-
-  for (int i = 1; i < j-1; ++i) {
-      int16_t x = magnXCalibBuffer[i];
-      int16_t y = magnYCalibBuffer[i];
-
-      if (x < xMin) xMin = x;
-      if (x > xMax) xMax = x;
-
-      if (y < yMin) yMin = y;
-      if (y > yMax) yMax = y;
+  delay(3000);
+  SIM.println("AT+HTTPREAD");
+  delay(1000);
+  while (SIM.available()) {
+    Serial.write(SIM.read());
   }
 
-  // Hard-iron offsets
-  float bx = 0.5f * (xMax + xMin);
-  float by = 0.5f * (yMax + yMin);
-
-  magX_off  = bx, magY_off  = by;
-} // buffers go out of scope here, RAM reclaimed automatically
-
-
-void printIMUOffsetsAndReadings() {
-  Serial.println("=== IMU Offsets ===");
-  Serial.print("accX_off: "); Serial.print(accX_off);
-  Serial.print(", accY_off: "); Serial.print(accY_off);
-  Serial.print(", accZ_off: "); Serial.println(accZ_off);
-
-  Serial.print("gyroX_off: "); Serial.print(gyroX_off);
-  Serial.print(", gyroY_off: "); Serial.print(gyroY_off);
-  Serial.print(", gyroZ_off: "); Serial.println(gyroZ_off);
-
-  Serial.println("=== IMU Readings ===");
-  Serial.print("accX: "); Serial.print(accX);
-  Serial.print(", accY: "); Serial.print(accY);
-  Serial.print(", accZ: "); Serial.println(accZ);
-
-  Serial.print("gyroX: "); Serial.print(gyroX);
-  Serial.print(", gyroY: "); Serial.print(gyroY);
-  Serial.print(", gyroZ: "); Serial.println(gyroZ);
+  sendCommand("AT+HTTPTERM", "OK");
+  return true;
 }
