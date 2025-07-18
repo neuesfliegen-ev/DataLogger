@@ -80,7 +80,10 @@ String dataBuffer = ""; // Buffer for batching data
 // === Calibration Variables ===
 float accX_off  = 0, accY_off  = 0, accZ_off  = 0;
 float gyroX_off = 0, gyroY_off = 0, gyroZ_off = 0;
-
+float magX_off  = 0, magY_off  = 0, magZ_off  = 0;
+float preAccX, preAccY, preAccZ = 0;
+float preGyroX, preGyroY, preGyroZ = 0;
+float preMagX, preMagY, preMagZ;
 
 
 
@@ -92,6 +95,7 @@ void updateBarometerData();
 String generateDataLine();
 void logToSD();
 void calibrateIMU(); 
+void calibrateIMU2();
 void generateFilename(); 
 void readNextLineFromSD();
 
@@ -132,6 +136,8 @@ void setup() {
     displayTwoLines("Failed to", "initialize IMU.", u8g2_font_ncenB10_tr, 35, 10);
     while (1);
   }
+  
+  delay(2000);  // Remove once we make sure an ISR cant interrupt it.
   Serial.println("IMU initialized successfully!");
   displayTwoLines("IMU initialized", "successfully!", u8g2_font_ncenB10_tr, 10, 20);
   delay(2000);
@@ -175,12 +181,27 @@ void setup() {
   updateGPSData();
   generateFilename();
 
+  Serial.println("Start IMU Calibration? Press button");
+  displayTwoLines("Start Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+
+  while(!buttonInterruptFlag) {
+    yield();    // Nano BLE 33, RTOS native instructions. Doesn't starve the processor with delay(500) and ensures proper waiting of the button pressed (even though our current button doesnt have that problem).
+  }
+
+  calibrateIMU();
+  calibrateIMU2();
+
+  Serial.println("IMU calibration complete.");  
+  displayTwoLines("IMU calibration", "complete.", u8g2_font_ncenB10_tr, 10, 20);
+
   displayTwoLines("Ready to", "start!", u8g2_font_ncenB10_tr, 35, 45);
   delay(2000);
+  
   displayToScreen("Team 1", 30, 35);
 
   // Wait for button to start logging
   bool toggle = false;
+  buttonInterruptFlag = false;
   while (!buttonInterruptFlag) {
     updateBatteryVoltage();
 
@@ -230,7 +251,7 @@ void loop() {
   updateGPSData();
   updateLogging();
   logToSD();
-  printIMUOffsetsAndReadings();
+  //printIMUOffsetsAndReadings();
   // displayToScreen();
   // readNextLineFromSD();
   //delay(1000); // 1Hz logging rate will be removed later!
@@ -273,17 +294,26 @@ void loop() {
 }
 
 // === IMU Data Update ===
-void updateIMUData() {
+void updateIMUData() {  
   if (IMU.accelerationAvailable()) {
-    IMU.readAcceleration(accX, accY, accZ);
+    IMU.readAcceleration(preAccX, preAccY, preAccZ);
+    accX = preAccX - accX_off;
+    accY = preAccY - accY_off;
+    accZ = preAccZ - accZ_off;
   }
   if (IMU.gyroscopeAvailable()) {
-    IMU.readGyroscope(gyroX, gyroY, gyroZ);
+    IMU.readGyroscope(preGyroX, preGyroY, preGyroZ);
+    gyroX = preGyroX - gyroX_off;
+    gyroY = preGyroY - gyroY_off;
+    gyroZ = preGyroZ - gyroZ_off;
   }
   if (IMU.magneticFieldAvailable()) {
-    IMU.readMagneticField(magX, magY, magZ);
+    IMU.readMagneticField(preMagX, preMagY, preMagZ);
+    magX = preMagX - magX_off;
+    magY = preMagY - magY_off;
   }
 }
+
 
 // === Barometer Data Update ===
 void updateBarometerData() {
@@ -345,7 +375,7 @@ void updateGPSData() {
       char c = Serial1.read();
 
       // Print raw NMEA sentence
-      Serial.write(c);
+      //Serial.write(c);
 
       // Feed to TinyGPS parser
       gps.encode(c);
@@ -595,11 +625,14 @@ void waitForGPSLock() {
 
     if (SatCount >= MIN_SATS_REQUIRED && gps.date.isValid() && gps.time.isValid()) {
       locked = true;
+      updateGPSData();
+      displayTwoLines("Waiting for GPS", satMsg, u8g2_font_ncenB10_tr, 15, 30);
       break;  // Good GPS fix, break early
     }
 
     delay(1000);  // Check every 1 second
   }
+  delay(1000);  // Check every 1 second
 
   if (!locked) {
     // Timeout reached without lock
@@ -621,9 +654,9 @@ void waitForGPSLock() {
 
 
 
-// === IMU Calibration ===
+// === IMU Calibration (Accelerometer and Gyroscope) ===
 void calibrateIMU() {
-  const int CALIB_SAMPLES = 25;
+  const int CALIB_SAMPLES = 100;
   float temp;
   float accXCalibBuffer[CALIB_SAMPLES];
   float accYCalibBuffer[CALIB_SAMPLES];  
@@ -635,7 +668,7 @@ void calibrateIMU() {
   for (int i = 0;  i < CALIB_SAMPLES; i++) {
     // Waits until all data is ready for collection
     while (!IMU.accelerationAvailable() || !IMU.gyroscopeAvailable()) {
-      delay(1);          // sleep to avoid a busy-loop
+      yield();
     }
 
     IMU.readAcceleration(accX, accY, accZ);
@@ -646,7 +679,7 @@ void calibrateIMU() {
     gyroXCalibBuffer[i] = gyroX; gyroYCalibBuffer[i] = gyroY;  gyroZCalibBuffer[i] = gyroZ; 
 
     // Accelerometer and gyrospcope output data rate is fixed at 99.84 Hz (10ms)
-    delay(11);
+    delay(11); // CHANGE THIS USING YIELD
   }
     
   // Bubble Sorting to find the Median (for each sensor)
@@ -695,7 +728,61 @@ void calibrateIMU() {
   int middle = CALIB_SAMPLES / 2;
   accX_off = accXCalibBuffer[middle];  accY_off = accYCalibBuffer[middle];  accZ_off = accZCalibBuffer[middle] - 1;
   gyroX_off = gyroXCalibBuffer[middle];  gyroY_off = gyroYCalibBuffer[middle];  gyroZ_off = gyroZCalibBuffer[middle];
+
+  printIMUOffsetsAndReadings();
 }
+
+// === IMU Calibration (Magnetometer) ===
+void calibrateIMU2() {
+  // Calculate this buffer depending on the maximum sampling rate + maximum calibration time that I will use.
+  const int MAGNET_CALIB_SAMPLES = 6000;   // Considering the max 100 Hz sampling rate and 60s of calibration (far beyond the needed, probably)
+
+  // It would be slightly better to have "float" buffers, but make sure of the IMU sampling rate. Two int16_t buffers take 23 kB (9% of RAM) temporarily.
+  int16_t magnXCalibBuffer[MAGNET_CALIB_SAMPLES];
+  int16_t magnYCalibBuffer[MAGNET_CALIB_SAMPLES];
+  //float magnZCalibBuffer[MAGNET_CALIB_SAMPLES]; // Probably not needed. Only if Six-Axis Calibration method is used.
+
+  Serial.println("END Calibration? Press button");
+  displayTwoLines("END Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+
+  int j = 0;
+  buttonInterruptFlag = false;
+  while(!buttonInterruptFlag && j < MAGNET_CALIB_SAMPLES) {
+    while (!IMU.magneticFieldAvailable()) {
+      yield();
+    }
+
+    IMU.readMagneticField(magX, magY, magZ);
+
+    magnXCalibBuffer[j] = magX;  magnYCalibBuffer[j] = magY;
+    j++;
+  }
+
+  // ADD CODE THAT MAKES SURE THAT THE INITIALIZATION WAS LONG ENOUGH AND THAT ALL POSITIVE AND NEGATIVE VALUES ARE RECORDED. ELSE, TRY AGAIN
+
+  // Find maximums and minimums. The other values will be necessary to double check correct initialization
+  int16_t xMin = magnXCalibBuffer[0];
+  int16_t xMax = xMin;
+  int16_t yMin = magnYCalibBuffer[0];
+  int16_t yMax = yMin;
+
+  for (int i = 1; i < j-1; ++i) {
+      int16_t x = magnXCalibBuffer[i];
+      int16_t y = magnYCalibBuffer[i];
+
+      if (x < xMin) xMin = x;
+      if (x > xMax) xMax = x;
+
+      if (y < yMin) yMin = y;
+      if (y > yMax) yMax = y;
+  }
+
+  // Hard-iron offsets
+  float bx = 0.5f * (xMax + xMin);
+  float by = 0.5f * (yMax + yMin);
+
+  magX_off  = bx, magY_off  = by;
+} // buffers go out of scope here, RAM reclaimed automatically
 
 
 void printIMUOffsetsAndReadings() {
