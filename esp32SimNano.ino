@@ -14,7 +14,7 @@ volatile bool sendingInProgress = false;
 bool simReady = false;
 
 // ====== I2C RECEIVE CALLBACK ======
-#define MAX_MESSAGE_SIZE 2560  // 80 * 32 or slightly more
+#define MAX_MESSAGE_SIZE 22000  // 780 chunk
 char messageBuffer[MAX_MESSAGE_SIZE];
 uint16_t messageIndex = 0;
 
