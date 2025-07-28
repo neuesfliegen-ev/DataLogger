@@ -1,103 +1,113 @@
 #include <Wire.h>
 
-#define I2C_ADDRESS 0x08
+#define I2C_ADDRESS    0x42
+#define STATUS_LED     2 
+#define READY_LINE     4   // ESP32 ➝ Nano
+#define ACK_LINE       5   // ESP32 ➝ Nano
 #define SIM_BAUD 115200
 #define SIM_TX 17  // TX to SIM7600 RX
 #define SIM_RX 16  // RX from SIM7600 TX
+#define SEND_INTERVAL  200  // ms (time between I2C receive and ACK)
 
 HardwareSerial SIM7600(2);
-String latestPayload = "";
-String lastResponse = "";  // Global variable to store latest modem response
-String lastSendStatus = "WAIT";  // "OK", "FAIL", or "WAIT"
-volatile bool sendingInProgress = false;
 
+enum Mode { REALTIME, BATCH };
+Mode currentMode = REALTIME;  // Default mode
+
+String latestPayload = "";
+String lastResponse = "";
+
+bool dataHasBeenReceived = false;
 bool simReady = false;
 
+unsigned long now = 0;
+unsigned long lastAttemptTime = 0;
+unsigned long lastSIMCheckTime = 0;
+
 // ====== I2C RECEIVE CALLBACK ======
-#define MAX_MESSAGE_SIZE 22000  // 780 chunk
-char messageBuffer[MAX_MESSAGE_SIZE];
-uint16_t messageIndex = 0;
-
 void receiveEvent(int howMany) {
-  if (sendingInProgress) {
-    Serial.println("[I2C] Received data while busy. Ignoring...");
-    // flush bytes anyway
-    while (Wire.available()) Wire.read();
-    return;
+  if (howMany < 2) return;
+
+  digitalWrite(READY_LINE, LOW);  // 🛑 Not ready while receiving
+
+  latestPayload = "";
+  while (Wire.available()) {
+    latestPayload += (char)Wire.read();
   }
 
-  if (howMany < 1) return;
+  dataHasBeenReceived = true;
 
-  uint8_t chunkId = Wire.read();  // first byte = chunk index or 255 end marker
-
-  if (chunkId == 255) {
-    // End of transmission
-    messageBuffer[messageIndex] = '\0';  // null-terminate
-    Serial.println("[I2C] ✅ Full message received:");
-    Serial.println(messageBuffer);
-
-    latestPayload = String(messageBuffer);  // copy to String for processing
-    messageIndex = 0;  // reset buffer for next message
-    return;
-  }
-
-  // Read chunk into messageBuffer
-  while (Wire.available() && messageIndex < MAX_MESSAGE_SIZE - 1) {
-    messageBuffer[messageIndex++] = Wire.read();
-  }
-}
-
-
-
-// ====== I2C REQUEST CALLBACK ======
-void requestEvent() {
-  const char* msg;
-
-  if (!simReady) {
-    msg = "WAIT";  // SIM7600 not initialized yet
-  } else if (sendingInProgress) {
-    msg = "BUSY";  // Currently processing a send
-  } else if (lastSendStatus == "OK") {
-    msg = "READY_OK";  // Ready and last send succeeded
-  } else if (lastSendStatus == "FAIL") {
-    msg = "READY_FAIL";  // Ready but last send failed
+  // 🔍 Look for mode in JSON payload
+  if (latestPayload.indexOf("\"mode\":\"REALTIME\"") != -1) {
+    currentMode = REALTIME;
+    Serial.println("🌀 Mode: REALTIME");
+  } else if (latestPayload.indexOf("\"mode\":\"BATCH\"") != -1) {
+    currentMode = BATCH;
+    Serial.println("🌀 Mode: BATCH");
   } else {
-    msg = "READY";  // Ready but no previous send yet
+    Serial.println("⚠️ Could not determine mode from payload.");
   }
 
-  Wire.write((const uint8_t*)msg, strlen(msg));
+  Serial.println("✅ Payload received:");
+  Serial.println(latestPayload);
 }
-
-
-
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  Wire.begin(I2C_ADDRESS);
-  Wire.onReceive(receiveEvent);
-  Wire.onRequest(requestEvent);
+  pinMode(STATUS_LED, OUTPUT);
+  pinMode(READY_LINE, OUTPUT);
+  pinMode(ACK_LINE, OUTPUT);
 
+  digitalWrite(READY_LINE, LOW);
+  digitalWrite(ACK_LINE, LOW);
+
+  Wire.begin(I2C_ADDRESS);  // ESP32 as I2C Slave
+  Wire.onReceive(receiveEvent);
+
+  delay(2000);
   initSIM7600();
+  Serial.println("✅ ESP32 I2C Slave ready");
 }
 
 void loop() {
-  if (simReady && latestPayload.length() > 0) {
-    Serial.println("[I2C] Received:");
+  now = millis();
+
+  // Blinking status LED (heartbeat)
+  digitalWrite(STATUS_LED, now % 1000 < 50);
+
+  if (dataHasBeenReceived && (now - lastAttemptTime >= SEND_INTERVAL)) {
+    dataHasBeenReceived = false;
+
+    Serial.println("[ESP] 📨 Forwarding payload:");
     Serial.println(latestPayload);
 
-    if (sendPayload(latestPayload)) {
-      Serial.println("[SIM7600] Payload sent successfully.");
+    // Simulated send to SIM7600 here
+    // bool ok = sendPayload(latestPayload);
+    bool ok =  sendPayload(latestPayload);  // Placeholder for real send
+
+    if (ok) {
+      Serial.println("[ESP] ✅ Payload processed!");
+      digitalWrite(ACK_LINE, HIGH);
     } else {
-      Serial.println("[SIM7600] Failed to send payload.");
+      Serial.println("[ESP] ❌ Send failed");
+      digitalWrite(ACK_LINE, LOW);
     }
 
+    lastAttemptTime = now;
     latestPayload = "";
   }
 
-  delay(500);
+  // SIM status check every SEND_INTERVAL mm sec
+  if (now - lastSIMCheckTime >= SEND_INTERVAL ) {
+    simReady = checkSIMStatus();
+    digitalWrite(READY_LINE, simReady ? HIGH : LOW);
+    lastSIMCheckTime = now;
+  }
 }
+
+
 
 // ====== INIT SIM7600 ======
 int initSIM7600() {
@@ -157,41 +167,27 @@ int initSIM7600() {
 
   Serial.println("[SIM7600] Initialization successful.");
   simReady = true;
-  lastSendStatus = "READY";  // Initial state, no data sent yet
+  digitalWrite(READY_LINE, HIGH);  // Signal Nano that we're ready
 
   return 0;
 }
 
 
 // ====== SEND PAYLOAD ======
-bool sendPayload(String payload) {
-  sendingInProgress = true;
-
-  if (!sendAT("AT+HTTPDATA=" + String(payload.length()) + ",10000", "DOWNLOAD", 5000)) {
-    lastSendStatus = "FAIL";
-    sendingInProgress = false;
-    return false;
-  }
+bool sendPayload(const String& payload) {
+  if (!sendAT("AT+HTTPDATA=" + String(payload.length()) + ",10000", "DOWNLOAD", 3000)) return false;
 
   SIM7600.println(payload);
+  SIM7600.flush();
 
-  if (!waitFor("OK", 3000)) {  // Give it some room
-    Serial.println("[SIM7600] No OK after payload. Aborting.");
-    lastSendStatus = "FAIL";
-    sendingInProgress = false;
-    return false;
-  }
-
-  if (sendAT("AT+HTTPACTION=1", "+HTTPACTION: 1,200", 5000)) {
-    lastSendStatus = "OK";
-  } else {
-    lastSendStatus = "FAIL";
-  }
-
-  sendingInProgress = false;
-  return lastSendStatus == "OK";
+  if (!waitFor("OK", 3000)) return false;
+  
+  if (sendAT("AT+HTTPACTION=1", "+HTTPACTION: 1,200", 5000)) return true;
+  return false;
 }
 
+
+// ====== WAIT FOR TARGET ======
 
 bool waitFor(String expected, int timeout) {
   unsigned long t0 = millis();
@@ -232,3 +228,11 @@ bool sendAT(String cmd, String expected, int timeout) {
   Serial.println("[SIM7600] Timeout waiting for: " + expected);
   return false;
 }
+
+//====== Check if SIM still alive ======
+bool checkSIMStatus() {
+  return sendAT("AT", "OK", 1000);
+}
+
+
+
