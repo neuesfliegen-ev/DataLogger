@@ -556,12 +556,12 @@ String generateDataLine() {
   line += String(gpsAltitude) + ",";
   line += String(Speed) + ",";
   line += String(SatCount) + ",";
-  line += String(roll) + ",";
-  line += String(pitch) + ",";
-  line += String(yaw) + ",";
+//  line += String(roll) + ",";
+//  line += String(pitch) + ",";
+//  line += String(yaw) + ",";
   line += String(pressure) + ",";
-  line += String(temperature) + ",";
-  line += String(paltitude); + ",";
+//  line += String(temperature) + ",";
+//  line += String(paltitude); + ",";
   line += String(batteryVoltage);  
   return line;
 }
