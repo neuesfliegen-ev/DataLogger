@@ -6,15 +6,27 @@
 #include <Arduino_LPS22HB.h> // Barometric sensor (LPS22HB)
 #include <TinyGPSPlus.h>
 #include <Arduino.h>
+#include <CircularBuffer.hpp>
 
 // team number 
 #define TEAM_NUMBER 1
 #define MIN_SATS_REQUIRED 4
 #define GPS_LOCK_TIMEOUT_MS 30000  // 30 seconds
+#define loggingPeriod 100 // logging Period in milli seconds. Logging Freq= 1/ loggingPeriod KHz
+
+// === ESP & SIM7600 constants ===
+#define ESP32_ADDR 0x42
+#define READY_LINE 4
+#define ACK_LINE   5
+#define LED_PIN    13
+#define SDA_ESP    2
+#define SCL_ESP    6
+#define BUCKET_SIZE 5
+
+TwoWire WireESP(SDA_ESP, SCL_ESP);  // Second I2C bus on Nano BLE Sense Rev2
 
 // Create GPS parser
 TinyGPSPlus gps;
-
 
 // Voltage divider values
 const float R1 = 1786.0; // 1800Ohms 
@@ -86,6 +98,18 @@ float preGyroX, preGyroY, preGyroZ = 0;
 float preMagX, preMagY, preMagZ;
 
 
+// ====== Mode and Buffer Settings FOR ESP Sending ======
+enum Mode { REALTIME, BATCH };
+Mode currentMode = REALTIME;  // default mode
+
+CircularBuffer<String, BUCKET_SIZE> sensorBuffer;
+
+volatile bool espReady = false;
+bool awaitingAck = false;
+
+//  ====== logging parameters ======
+unsigned long now = 0;
+unsigned long lastCollectTime = 0; 
 
 // === Function Declarations ===
 void displayToScreen(const char str[], u8g2_uint_t x, u8g2_uint_t y);
@@ -107,6 +131,11 @@ void startLog();
 void stopLog();
 void updateLogging(); // starts logging at button *release*
 void printIMUOffsetsAndReadings();
+String buildJsonPayload(const String& jsonWrappedLine);
+template <size_t N>
+String buildJsonPayload(const CircularBuffer<String, N>& buffer);
+void logToServer();
+void log();
 
 void setup() {
   Serial.begin(9600);    // USB serial for debug
@@ -157,6 +186,32 @@ void setup() {
   displayTwoLines("BARO sensor", "initialized!", u8g2_font_ncenB10_tr, 15, 25);
   delay(2000);
 
+
+  //============ ESP Initialisation  ================
+  Serial.println("Waiting for ESP32 + SIM7600 to initialize...");
+  displayTwoLines("Waiting for", "ESP32...", u8g2_font_ncenB10_tr, 40, 25);
+  delay(2000);
+
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(READY_LINE, INPUT);
+  pinMode(ACK_LINE, INPUT);
+  attachInterrupt(digitalPinToInterrupt(READY_LINE), onESPReady, RISING);
+
+  WireESP.begin();
+
+  espReady = digitalRead(READY_LINE);  // Check initial state
+  
+  while (!espReady) {
+    Serial.println("ESP32 not ready. Retrying in 3s...");
+    displayTwoLines("ESP32", "not ready...", u8g2_font_ncenB10_tr, 40, 25);
+    delay(3000);
+  }
+
+  Serial.println("✅ ESP32 is ready. Proceeding...");
+  displayTwoLines("✅ ESP32 Ready", "Proceeding ...", u8g2_font_ncenB08_tr, 0, 12);
+  delay(2000);
+  //============ ESP Initialisation End  ================
+
   // GPS module on Serial1 (D0 = RX, D1 = TX)
   //Serial.println("🔍 Starting GPS reader ..."); 
   displayTwoLines("Initializing", "GPS reader...", u8g2_font_ncenB10_tr, 25, 15);
@@ -181,23 +236,39 @@ void setup() {
   updateGPSData();
   generateFilename();
 
-  Serial.println("Start IMU Calibration? Press button");
-  displayTwoLines("Start Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+  //============ IMU CALIBIRATION. =========//
+  Serial.println("Start IMU Offset Calibration? Press button");
+  displayTwoLines("Offset Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
 
   while(!buttonInterruptFlag) {
     yield();    // Nano BLE 33, RTOS native instructions. Doesn't starve the processor with delay(500) and ensures proper waiting of the button pressed (even though our current button doesnt have that problem).
   }
+  buttonInterruptFlag = false; 
 
   calibrateIMU();
+
+  delay(2000);
+  //IMU MAG Calibiration
+  Serial.println("Start IMU MAG Calibration? Press button");
+  displayTwoLines("MAG Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+
+  while(!buttonInterruptFlag) {
+    yield();    // Nano BLE 33, RTOS native instructions. Doesn't starve the processor with delay(500) and ensures proper waiting of the button pressed (even though our current button doesnt have that problem).
+  }
+  buttonInterruptFlag = false; 
+
   calibrateIMU2();
 
   Serial.println("IMU calibration complete.");  
   displayTwoLines("IMU calibration", "complete.", u8g2_font_ncenB10_tr, 10, 20);
+  delay(2000);
+  //============ IMU CALIBIRATION END. =========//
 
   displayTwoLines("Ready to", "start!", u8g2_font_ncenB10_tr, 35, 45);
   delay(2000);
   
   displayToScreen("Team 1", 30, 35);
+  delay(2000);
 
   // Wait for button to start logging
   bool toggle = false;
@@ -246,49 +317,64 @@ void setup() {
 }
 
 void loop() {
-  updateIMUData();
-  updateBarometerData();
-  updateGPSData();
-  updateLogging();
-  logToSD();
-  //printIMUOffsetsAndReadings();
-  // displayToScreen();
-  // readNextLineFromSD();
-  //delay(1000); // 1Hz logging rate will be removed later!
-  checkBattery();
-  
-  // Looping through team number, battery voltage and GPS satellite
-  if (millis() - lastDisplaySwitch > 2000) {    // Check if 2000 ms (2 seconds) have passed since last display change
-    lastDisplaySwitch = millis();               // Reset the timer
+  now = millis();
+  digitalWrite(LED_PIN, now % 1000 < 50);  // LED heartbeat every 1 sec
+  //Serial.println(espReady);
+  //Serial.println(digitalRead(READY_LINE));
 
-    displayState = (displayState + 1) % 4;      // Move to next state (0 -> 1 -> 2 -> 0)
+  if (now - lastCollectTime >= loggingPeriod)  {
+    lastCollectTime = now;
+    
 
-    switch (displayState) {
-      case 0: {     // Display team
-        displayToScreen("Team 1", 25, 35);      // Show "Team 1" centered on screen
-        break;
-      }
 
-      case 1: {     // Display battery level
-        char buf[20];                                                   // Create a text buffer
-        snprintf(buf, sizeof(buf), "%.2f V", batteryVoltage);              // Format voltage as "3.70V"
-        displayTwoLines("Battery level:", buf, u8g2_font_ncenB10_tr, 15, 50);
-        break;
-      }
+    updateLogging();
+    updateIMUData();
+    updateBarometerData();
+    updateGPSData();
+    log();
+    //printIMUOffsetsAndReadings();
+    // displayToScreen();
+    // readNextLineFromSD();
+    //delay(1000); // 1Hz logging rate will be removed later!
+    checkBattery();
+    
+// UI rotation: team, battery, GPS, log state, ACK status
+    if (now - lastDisplaySwitch > 2000) {
+      lastDisplaySwitch = now;
+      displayState = (displayState + 1) % 5;  // now 5 states total
 
-      case 2: {     // Display GPS satellites count
-        displayTwoLines("Satellites:", String(SatCount).c_str(), u8g2_font_ncenB10_tr, 28, 60);
-        break;
-      }
+      switch (displayState) {
+        case 0:
+          displayToScreen("Team 1", 25, 35);
+          break;
 
-      case 3: {// promte the user to start logging
-        const char* logStateStr = (logState == LogState::IDLE) ? "IDLE" : "Logging";
-        displayTwoLines("Logging State:", logStateStr, u8g2_font_ncenB10_tr, 10, 30);
-        break;
+        case 1: {
+          char buf[20];
+          snprintf(buf, sizeof(buf), "%.2f V", batteryVoltage);
+          displayTwoLines("Battery level:", buf, u8g2_font_ncenB10_tr, 15, 50);
+          break;
+        }
+
+        case 2:
+          displayTwoLines("Satellites:", String(SatCount).c_str(), u8g2_font_ncenB10_tr, 28, 60);
+          break;
+
+        case 3: {
+          const char* logStateStr = (logState == LogState::IDLE) ? "IDLE" : "Logging";
+          displayTwoLines("Logging State:", logStateStr, u8g2_font_ncenB10_tr, 10, 30);
+          break;
+        }
+
+        case 4: {
+          // Show ACK line status from ESP
+          bool ackHigh = digitalRead(ACK_LINE) == HIGH;
+          displayTwoLines("ACK Line:", ackHigh ? "✅ HIGH" : "LOW", u8g2_font_ncenB10_tr, 30, 30);
+          if (ackHigh) Serial.println("✅ ACK received from ESP");
+          break;
+        }
       }
     }
   }
-
   // Optional: add a short delay to reduce CPU load if needed
  // delay(1000); // (uncomment if display flickers or CPU usage is high)
 }
@@ -475,17 +561,14 @@ String generateDataLine() {
   line += String(yaw) + ",";
   line += String(pressure) + ",";
   line += String(temperature) + ",";
-  line += String(paltitude);
-  line += String(paltitude);
+  line += String(paltitude); + ",";
+  line += String(batteryVoltage);  
   return line;
 }
 
 
-void logToSD() {
-  if (logState != LogState::ACTIVE) return;
-
+void logToSD(const String& line) {
   // Collect data
-  String line = generateDataLine(); 
   dataBuffer += line + "\n";
 
   // Write buffered data every 1 sed
@@ -803,4 +886,74 @@ void printIMUOffsetsAndReadings() {
   Serial.print("gyroX: "); Serial.print(gyroX);
   Serial.print(", gyroY: "); Serial.print(gyroY);
   Serial.print(", gyroZ: "); Serial.println(gyroZ);
+}
+
+void onESPReady() {
+  espReady = true;
+}
+
+
+
+// streamlit deals with json in realtime dashboards. so we must use it. 
+//to decrease the payload we will not send the header. 
+//only send the mode and the data as arraylist with the aggreed arangment.
+//this function  takes whatever arraylsit or line/ string and encapulste it in json format this funcion has an overwrite with differnt sig
+template <size_t N>
+String buildJsonPayload(const CircularBuffer<String, N>& buffer) {
+  String payload = "{\"mode\":\"" + modeToString() + "\",\"data\":[";
+  for (int i = 0; i < buffer.size(); i++) {
+    payload += buffer[i];
+    if (i < buffer.size() - 1) payload += ",";
+  }
+  payload += "]}";
+  return payload;
+}
+// covert the curent mode to string to be used in the payload
+String modeToString() {
+  switch (currentMode) {
+    case REALTIME: return "REALTIME";
+    case BATCH: return "BATCH";
+    default: return "UNKNOWN";
+  }
+}
+
+// For real-time mode (pass a pre-bracketed JSON string like "[" + line + "]")
+String buildJsonPayload(const String& jsonWrappedLine) {
+  return "{\"mode\":\"" + modeToString() + "\",\"data\":" + jsonWrappedLine + "}";
+}
+
+void sendToESP(const String& msg) {
+  WireESP.beginTransmission(ESP32_ADDR);
+  WireESP.write(msg.c_str(), msg.length());
+  WireESP.endTransmission();
+
+  espReady = false;
+}
+
+void logToServer(const String& line){
+  //Serial.println(espReady);
+  //Serial.println(digitalRead(READY_LINE));    
+    if (currentMode == REALTIME && espReady) {
+    sendToESP(buildJsonPayload("[" +line + "]"));
+  }
+
+  else if (currentMode == BATCH) {
+    sensorBuffer.push("[" + line + "]");
+    if (espReady) {
+      sendToESP(buildJsonPayload(sensorBuffer));
+      sensorBuffer.clear();
+    }
+  }
+
+  // if (digitalRead(ACK_LINE) == HIGH) {
+  //   Serial.println("✅ ACK received from ESP");
+  // }
+}
+
+
+void log() {
+  if (logState != LogState::ACTIVE) return;
+  String line = generateDataLine(); 
+  logToSD(line);
+  logToServer(line);
 }
