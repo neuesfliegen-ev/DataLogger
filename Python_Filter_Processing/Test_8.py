@@ -33,12 +33,12 @@ def centered_moving_average(data, window_size, offset):
 
 df = pd.read_excel('Datalogger.xlsx', sheet_name='Sheet2') # Import entire Excel file as a dataframe
 window_size = 100 # adjust window size here as needed
-offset = 1.005 # adjust offset here as needed
+offset = 0.005 # adjust offset here as needed
 plot_start = 0 # adjust start of plot
 plot_end = 27000 # adjust end of plot
 time = df['adjusted_timestamp']
 acc_z = df['accZ'] - offset
-expected_acc_z = 0 # set expected value of z
+expected_acc_z = 1 # set expected value of z
 
 filtered_causal_z = causal_moving_average(df['accZ'], window_size, offset)
 filtered_centered_z = centered_moving_average(df['accZ'], window_size, offset)
