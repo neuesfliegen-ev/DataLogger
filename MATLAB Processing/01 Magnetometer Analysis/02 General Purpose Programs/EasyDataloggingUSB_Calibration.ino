@@ -5,7 +5,8 @@
 #include <Arduino.h>
 
 #define loggingPeriod 100     // logging Period in milli seconds. Logging Freq= 1/ loggingPeriod KHz
-#define CALIB_SAFETY_CHECK 0  // boolean
+#define CALIB_SAFETY_CHECK 1  // boolean
+#define CALIB_DEBUG 0
 
 // === Global Sensor Variables ===
 unsigned long timestamp;
@@ -44,7 +45,7 @@ void calibrateIMU();
 void calibrateIMU2();
 void waitForButtonPressed();
 void onButtonPress();
-bool fullSpanCalibration(float, float, float, float, float, float);
+bool fullSpanCalibration(int16_t, int16_t, int16_t, int16_t, int16_t, int16_t);
 
 void setup() {
   Serial.begin(9600);    // USB serial for debug
@@ -284,14 +285,13 @@ void calibrateIMU2() {
     magnXCalibBuffer[j] = magX;  magnYCalibBuffer[j] = magY; magnZCalibBuffer[j] = magZ;
     j++;
   }
-  Serial.println("DEBUG: Buffer filled OR Button pressed!");
 
   // Find maximums and minimums. The other values will be necessary to double check correct initialization
-  float xMin = magnXCalibBuffer[0]; float yMin = magnYCalibBuffer[0]; float zMin = magnZCalibBuffer[0];
-  float xMax = xMin;                float yMax = yMin;                float zMax = zMin;
+  int16_t xMin = magnXCalibBuffer[0]; int16_t yMin = magnYCalibBuffer[0]; int16_t zMin = magnZCalibBuffer[0];
+  int16_t xMax = xMin;                int16_t yMax = yMin;                int16_t zMax = zMin;
 
   for (int i = 0; i < j-1; ++i) {
-      float x = magnXCalibBuffer[i]; float y = magnYCalibBuffer[i]; float z = magnZCalibBuffer[i];
+      int16_t x = magnXCalibBuffer[i]; int16_t y = magnYCalibBuffer[i]; int16_t z = magnZCalibBuffer[i];
 
       if (x < xMin) {xMin = x;} else if (x > xMax) {xMax = x;}
       if (y < yMin) {yMin = y;} else if (y > yMax) {yMax = y;}
@@ -305,6 +305,13 @@ void calibrateIMU2() {
 
   magX_off = bx; magY_off = by; magZ_off = bz;
 
+  // (DEBUGGING) Min & Max axis display
+  if (CALIB_DEBUG) {
+      Serial.print(F("xMax: ")); Serial.print(xMax); Serial.print(F(" // xMin: ")); Serial.println(xMin);
+      Serial.print(F("yMax: ")); Serial.print(yMax); Serial.print(F(" // yMin: ")); Serial.println(yMin);
+      Serial.print(F("zMax: ")); Serial.print(zMax); Serial.print(F(" // zMin: ")); Serial.println(zMin);
+  }
+
   // Calibration reliability check-up
   if (CALIB_SAFETY_CHECK == 1) {
     // If calibration lasted less than 30'' or there's a lack of positive || negative values recorded, then the calibration isn't reliable
@@ -315,7 +322,7 @@ void calibrateIMU2() {
 } // buffers go out of scope here, RAM reclaimed automatically
 
 // This helper function checks that the recorded range sits on 50% of the expected span range. Otherwise, the calibration isn't reliable.
-bool fullSpanCalibration(float xMin, float xMax, float yMin, float yMax, float zMin, float zMax) {
+bool fullSpanCalibration(int16_t xMin, int16_t xMax, int16_t yMin, int16_t yMax, int16_t zMin, int16_t zMax) {
   if (((xMax - xMin) < 20) || ((yMax - yMin) < 50) || ((zMax - zMin) < 50)) {
     return 1;
   } else {
