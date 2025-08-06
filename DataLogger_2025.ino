@@ -87,7 +87,8 @@ unsigned long lastWriteTime = 0;
 unsigned long lastFlushTime = 0;
 const unsigned long WRITE_INTERVAL = 1000;  // Write to SD every 1 sec
 const unsigned long FLUSH_INTERVAL = 10000;  // Flush SD every 5 sec
-String dataBuffer = ""; // Buffer for batching data
+String dataBuffer = "";        // Buffer for batching data
+unsigned int wastedData = 0;   // Amount of data missed during batching (Handle it if necessary)
 
 // === Calibration Variables ===
 float accX_off  = 0, accY_off  = 0, accZ_off  = 0;
@@ -925,7 +926,9 @@ String buildJsonPayload(const String& jsonWrappedLine) {
 void sendToESP(const String& msg) {
   WireESP.beginTransmission(ESP32_ADDR);
   WireESP.write(msg.c_str(), msg.length());
-  WireESP.endTransmission();
+
+  // if (WireESP.endTransmission() == 0) => all good
+  WireESP.endTransmission(); // Returns an integer. Success (I2C_ERROR_OK = 0) / Error number defined in <esp_err.h>
 
   espReady = false;
 }
@@ -933,12 +936,13 @@ void sendToESP(const String& msg) {
 void logToServer(const String& line){
   //Serial.println(espReady);
   //Serial.println(digitalRead(READY_LINE));    
-    if (currentMode == REALTIME && espReady) {
-    sendToESP(buildJsonPayload("[" +line + "]"));
-  }
-
-  else if (currentMode == BATCH) {
-    sensorBuffer.push("[" + line + "]");
+  if (currentMode == REALTIME && espReady) {
+    sendToESP(buildJsonPayload("[" + line + "]"));
+  } else if (currentMode == BATCH) {
+    if (!sensorBuffer.isFull()) {
+      sensorBuffer.push("[" + line + "]");
+    } else { wastedData++; }
+    
     if (espReady) {
       sendToESP(buildJsonPayload(sensorBuffer));
       sensorBuffer.clear();
