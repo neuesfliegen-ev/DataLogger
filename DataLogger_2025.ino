@@ -189,7 +189,7 @@ void setup() {
 
   //============ ESP Initialisation  ================
   Serial.println("Waiting for ESP32 + SIM7600 to initialize...");
-  displayTwoLines("Waiting for", "ESP32...", u8g2_font_ncenB10_tr, 40, 25);
+  displayTwoLines("Waiting for", "ESP32...", u8g2_font_ncenB10_tr, 26, 36);
   delay(2000);
 
   pinMode(LED_PIN, OUTPUT);
@@ -203,12 +203,12 @@ void setup() {
   
   while (!espReady) {
     Serial.println("ESP32 not ready. Retrying in 3s...");
-    displayTwoLines("ESP32", "not ready...", u8g2_font_ncenB10_tr, 40, 25);
+    displayTwoLines("ESP32", "not ready...", u8g2_font_ncenB10_tr, 42, 25);
     delay(3000);
   }
 
-  Serial.println("✅ ESP32 is ready. Proceeding...");
-  displayTwoLines("✅ ESP32 Ready", "Proceeding ...", u8g2_font_ncenB08_tr, 0, 12);
+  Serial.println("ESP32 is ready. Proceeding...");
+  displayTwoLines("ESP32 Ready.", "Proceeding...", u8g2_font_ncenB10_tr, 19, 20);
   delay(2000);
   //============ ESP Initialisation End  ================
 
@@ -238,7 +238,8 @@ void setup() {
 
   //============ IMU CALIBIRATION. =========//
   Serial.println("Start IMU Offset Calibration? Press button");
-  displayTwoLines("Offset Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+  displayTwoLines("Offset Calibration?", "Press button", u8g2_font_5x8_tr, 20, 35);
+  delay(2000);
 
   while(!buttonInterruptFlag) {
     yield();    // Nano BLE 33, RTOS native instructions. Doesn't starve the processor with delay(500) and ensures proper waiting of the button pressed (even though our current button doesnt have that problem).
@@ -250,7 +251,8 @@ void setup() {
   delay(2000);
   //IMU MAG Calibiration
   Serial.println("Start IMU MAG Calibration? Press button");
-  displayTwoLines("MAG Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+  displayTwoLines("MAG Calibration?", "Press button", u8g2_font_5x8_tr, 25, 35);
+  delay(2000);
 
   while(!buttonInterruptFlag) {
     yield();    // Nano BLE 33, RTOS native instructions. Doesn't starve the processor with delay(500) and ensures proper waiting of the button pressed (even though our current button doesnt have that problem).
@@ -260,11 +262,11 @@ void setup() {
   calibrateIMU2();
 
   Serial.println("IMU calibration complete.");  
-  displayTwoLines("IMU calibration", "complete.", u8g2_font_ncenB10_tr, 10, 20);
+  displayTwoLines("IMU calibration", "complete.", u8g2_font_ncenB10_tr, 6, 25);
   delay(2000);
   //============ IMU CALIBIRATION END. =========//
 
-  displayTwoLines("Ready to", "start!", u8g2_font_ncenB10_tr, 35, 45);
+  displayTwoLines("Ready to", "start!", u8g2_font_ncenB10_tr, 33, 45);
   delay(2000);
   
   displayToScreen("Team 1", 30, 35);
@@ -291,18 +293,18 @@ void setup() {
           case 0: // Team number
             char buf[20];
             snprintf(buf, sizeof(buf), "Team %d", TEAM_NUMBER);
-            displayToScreen(buf, 25, 35);
+            displayToScreen(buf, 30, 35);
             break;
 
           case 1: { // Battery level
             char buf[20];
             snprintf(buf, sizeof(buf), "%.2f V", batteryVoltage);
-            displayTwoLines("Battery level:", buf, u8g2_font_ncenB10_tr, 15, 50);
+            displayTwoLines("Battery level:", buf, u8g2_font_ncenB10_tr, 18, 46);
             break;
           }
 
           case 2: // promte the user to start logging
-            displayTwoLines("Press the button", "to start logging", u8g2_font_ncenB10_tr, 10, 30);
+            displayTwoLines("Press the button", "to start logging", u8g2_font_ncenB10_tr, 5, 10);
             break;
         }
 
@@ -345,7 +347,7 @@ void loop() {
 
       switch (displayState) {
         case 0:
-          displayToScreen("Team 1", 25, 35);
+          displayToScreen("Team 1", 30, 35);
           break;
 
         case 1: {
@@ -361,15 +363,15 @@ void loop() {
 
         case 3: {
           const char* logStateStr = (logState == LogState::IDLE) ? "IDLE" : "Logging";
-          displayTwoLines("Logging State:", logStateStr, u8g2_font_ncenB10_tr, 10, 30);
+          displayTwoLines("Logging State:", logStateStr, u8g2_font_ncenB10_tr, 12, 42);
           break;
         }
 
         case 4: {
           // Show ACK line status from ESP
           bool ackHigh = digitalRead(ACK_LINE) == HIGH;
-          displayTwoLines("ACK Line:", ackHigh ? "✅ HIGH" : "LOW", u8g2_font_ncenB10_tr, 30, 30);
-          if (ackHigh) Serial.println("✅ ACK received from ESP");
+          displayTwoLines("ACK Line:", ackHigh ? "HIGH" : "LOW", u8g2_font_ncenB10_tr, 28, 45);
+          if (ackHigh) Serial.println("ACK received from ESP");
           break;
         }
       }
@@ -597,10 +599,10 @@ void startLog() {
     if (dataFile) {
       logState = LogState::ACTIVE;
       Serial.println("Data logging Procceeded!");
-      displayTwoLines("Data logging", "Proceed!", u8g2_font_ncenB10_tr, 15, 40);
+      displayTwoLines("Data logging", "Proceed!", u8g2_font_ncenB10_tr, 20, 32);
     } else {
     Serial.println("Error opening file for logging.");
-    displayTwoLines("Error Proceeding", "logging", u8g2_font_ncenB10_tr, 15, 40);
+    displayTwoLines("Error proceed-", "ing logging", u8g2_font_ncenB10_tr, 10, 24);
     logState = LogState::IDLE;
     }
   } else {
@@ -610,11 +612,11 @@ void startLog() {
       dataFile.println("timestamp,accX,accY,accZ,gyroX,gyroY,gyroZ,magX,magY,magZ,latitude,longitude,gpsAltitude,Speed,SatCount,roll,pitch,yaw,pressure,temperature,paltitude");
       logState = LogState::ACTIVE;
       Serial.println("Started a new logging session");
-      displayTwoLines("Started new", "log session", u8g2_font_ncenB10_tr, 15, 40);
+      displayTwoLines("Started new", "log session", u8g2_font_ncenB10_tr, 20, 26);
 
     }else {
       Serial.println("Error opening file for logging.");
-      displayTwoLines("Error opening", "log file", u8g2_font_ncenB10_tr, 15, 40);
+      displayTwoLines("Error opening", "log file", u8g2_font_ncenB10_tr, 14, 38);
       logState = LogState::IDLE;
     }
   }
@@ -628,12 +630,12 @@ void stopLog(){
     dataFile.close();
     Serial.println("File closed");
     Serial.println("Stopped data logging");
-    displayTwoLines("File closed", "log Stopped!", u8g2_font_ncenB10_tr, 15, 40);
+    displayTwoLines("File closed.", "Log stopped!", u8g2_font_ncenB10_tr, 25, 20);
     delay(2000);
 
   }else{
     Serial.println("File wasn't open");
-    displayTwoLines("Error", "File wasn't open!", u8g2_font_ncenB10_tr, 15, 40);
+    displayTwoLines("Error: File", "wasn't open!", u8g2_font_ncenB10_tr, 28, 20);
     delay(2000);
 
   }
@@ -658,7 +660,7 @@ void generateFilename() {
 
  if (gps.date.isValid() && gps.time.isValid()) {
     Serial.print("Using GPS for session log ");
-    displayTwoLines("Using GPS", "for session log", u8g2_font_ncenB10_tr, 10, 10);
+    displayTwoLines("Using GPS", "for session log", u8g2_font_ncenB10_tr, 26, 12);
     delay(2000);
     
     // Format: T<team><day><month><hour>.CSV → 8 chars before .CSV T0119083.csv team 01 day 19 month 08, hour (3 or 13)
@@ -670,21 +672,21 @@ void generateFilename() {
 
     Serial.println(filename);
     
-    displayTwoLines("session_ID:", filename, u8g2_font_ncenB10_tr, 15, 15);
+    displayTwoLines("session_ID:", filename, u8g2_font_ncenB10_tr, 25, 15);
     delay(2000);
 
   } else {
     Serial.println("No GPS time available!");
-    displayTwoLines("No GPS time", "available!", u8g2_font_ncenB10_tr, 10, 10);
+    displayTwoLines("No GPS time", "available", u8g2_font_ncenB10_tr, 18, 30);
     delay(2000);
 
-    displayTwoLines("Using timeStamp", "for session log", u8g2_font_ncenB10_tr, 10, 10);
+    displayTwoLines("Using timeStamp", "for session log", u8g2_font_ncenB10_tr, -1, 10);
     delay(2000);
     
     unsigned long ts = timestamp % 10000;
     snprintf(filename, sizeof(filename), "T%02d_%04lu.CSV", TEAM_NUMBER, ts);
 
-    displayTwoLines("session_ID:", filename, u8g2_font_ncenB10_tr, 15, 15);
+    displayTwoLines("session_ID:", filename, u8g2_font_ncenB10_tr, 25, 15);
     delay(2000);
     Serial.println(filename);
   }
@@ -704,12 +706,12 @@ void waitForGPSLock() {
     // Display satellite count
     char satMsg[30];
     snprintf(satMsg, sizeof(satMsg), "Sats: %d/%d", SatCount, MIN_SATS_REQUIRED);
-    displayTwoLines("Waiting for GPS", satMsg, u8g2_font_ncenB10_tr, 15, 30);
+    displayTwoLines("Waiting for GPS", satMsg, u8g2_font_ncenB10_tr, 5, 30);
 
     if (SatCount >= MIN_SATS_REQUIRED && gps.date.isValid() && gps.time.isValid()) {
       locked = true;
       updateGPSData();
-      displayTwoLines("Waiting for GPS", satMsg, u8g2_font_ncenB10_tr, 15, 30);
+      displayTwoLines("Waiting for GPS", satMsg, u8g2_font_ncenB10_tr, 5, 30);
       break;  // Good GPS fix, break early
     }
 
@@ -730,7 +732,7 @@ void waitForGPSLock() {
     delay(3000); // Show error for 3 seconds before continuing
   } else {
     Serial.println("GPS lock acquired!");
-    displayTwoLines("GPS Lock", "acquired!", u8g2_font_ncenB10_tr, 30, 40);
+    displayTwoLines("GPS lock", "acquired!", u8g2_font_ncenB10_tr, 35, 33);
     delay(2000);
   }
 }
@@ -826,7 +828,7 @@ void calibrateIMU2() {
   //float magnZCalibBuffer[MAGNET_CALIB_SAMPLES]; // Probably not needed. Only if Six-Axis Calibration method is used.
 
   Serial.println("END Calibration? Press button");
-  displayTwoLines("END Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+  displayTwoLines("Press button to", "end calibration", u8g2_font_ncenB10_tr, 6, 6);
 
   int j = 0;
   buttonInterruptFlag = false;
