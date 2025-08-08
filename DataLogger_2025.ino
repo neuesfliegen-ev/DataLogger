@@ -42,13 +42,15 @@ const float R2 = 505.0;  // 510 Ohms
 constexpr uint8_t PIN_LED_RED = 8; 
 constexpr uint8_t PIN_LED_GREEN = 9; 
 constexpr uint8_t PIN_LED_BLUE = 7; 
-constexpr uint8_t PIN_BAT_VSENSE = A1;
+constexpr uint8_t PIN_BAT1_VSENSE = A1;
+constexpr uint8_t PIN_BAT2_VSENSE = A2;
 
 // === Battery Indicator Values ===
 constexpr uint16_t ADC_MAX = 4095; // at 12-bit resolution
 constexpr float VREF = 3.30F; // Volts 
 constexpr float BAT_VLOW = 3.50F; // Volts at low battery
-float batteryVoltage = 0;
+float battery1Voltage = 0;
+float battery2Voltage = 0;
 
 
 // === OLED Setup (SH1106 I2C) ===
@@ -111,11 +113,13 @@ Mode currentMode = REALTIME;  // default mode
 CircularBuffer<String, BUCKET_SIZE> sensorBuffer;
 
 volatile bool espReady = false;
+volatile bool I2CError = false;
 bool awaitingAck = false;
 
 //  ====== logging parameters ======
 unsigned long now = 0;
 unsigned long lastCollectTime = 0; 
+unsigned long  LastI2CError = 0;
 
 // === Function Declarations ===
 void displayToScreen(const char str[], u8g2_uint_t x, u8g2_uint_t y);
@@ -153,7 +157,8 @@ void setup() {
   pinMode(PIN_LED_RED, OUTPUT);
   pinMode(PIN_LED_GREEN, OUTPUT);
   pinMode(PIN_LED_BLUE, OUTPUT);
-  pinMode(PIN_BAT_VSENSE, INPUT);
+  pinMode(PIN_BAT1_VSENSE, INPUT);
+  pinMode(PIN_BAT2_VSENSE, INPUT);
   analogReadResolution(12); 
   checkBattery();
 
@@ -285,7 +290,7 @@ void setup() {
   while (!buttonInterruptFlag) {
     updateBatteryVoltage();
 
-    if (batteryVoltage <= BAT_VLOW) {
+    if (battery1Voltage < BAT_VLOW || battery2Voltage < BAT_VLOW) {
       // Low battery: show warning and red LED only
       digitalWrite(PIN_LED_GREEN, LOW);
       digitalWrite(PIN_LED_RED, HIGH);
@@ -305,7 +310,7 @@ void setup() {
 
           case 1: { // Battery level
             char buf[20];
-            snprintf(buf, sizeof(buf), "%.2f V", batteryVoltage);
+            snprintf(buf, sizeof(buf), "%.2f V, %.2f V", battery1Voltage, battery2Voltage);
             displayTwoLines("Battery level:", buf, u8g2_font_ncenB10_tr, 15, 50);
             break;
           }
@@ -359,8 +364,8 @@ void loop() {
 
         case 1: {
           char buf[20];
-          snprintf(buf, sizeof(buf), "%.2f V", batteryVoltage);
-          displayTwoLines("Battery level:", buf, u8g2_font_ncenB10_tr, 15, 50);
+          snprintf(buf, sizeof(buf), "%.2f V, %.2f V", battery1Voltage, battery2Voltage);
+          displayTwoLines("Battery1,2 level:", buf, u8g2_font_ncenB10_tr, 15, 50);
           break;
         }
 
@@ -376,10 +381,16 @@ void loop() {
 
         case 4: {
           // Show ACK line status from ESP
-          bool ackHigh = digitalRead(ACK_LINE) == HIGH;
-          displayTwoLines("ACK Line:", ackHigh ? "✅ HIGH" : "LOW", u8g2_font_ncenB10_tr, 30, 30);
-          if (ackHigh) Serial.println("✅ ACK received from ESP");
-          break;
+          if(I2CError == true)
+          {
+            displayTwoLines("I2C Error:", "need Debug", u8g2_font_ncenB10_tr, 40, 25);
+            break;  // for readability 
+          }
+          else{
+            bool ackHigh = digitalRead(ACK_LINE) == HIGH;
+            displayTwoLines("ACK Line:", ackHigh ? "✅ HIGH" : "LOW", u8g2_font_ncenB10_tr, 30, 30);
+            //if (ackHigh) Serial.println("✅ ACK received from ESP");
+            break;
         }
       }
     }
@@ -505,17 +516,17 @@ void updateGPSData() {
 
 // === Updates current battery voltage ===
 void updateBatteryVoltage(){
-  batteryVoltage = analogRead(PIN_BAT_VSENSE) * VREF / ADC_MAX / (R1 /(R1 + R2)); //
-  //Serial.println(analogRead(PIN_BAT_VSENSE) );
-  //Serial.println(batteryVoltage);
-
+  battery1Voltage = analogRead(PIN_BAT1_VSENSE) * VREF / ADC_MAX / (R1 /(R1 + R2)); //
+  battery2Voltage = analogRead(PIN_BAT2_VSENSE) * VREF / ADC_MAX / (R1 /(R1 + R2)); //
+  //Serial.println(analogRead(PIN_BAT1_VSENSE) );
+  //Serial.println(battery1Voltage);
 }
 
 // === Checks battery charging need ===
 void checkBattery(){
   updateBatteryVoltage();
 
-  if(batteryVoltage <= BAT_VLOW){ //!!!check LED connection for HIGH/LOW assignment
+  if(battery1Voltage < BAT_VLOW || battery2Voltage < BAT_VLOW){ //!!!check LED connection for HIGH/LOW assignment
     digitalWrite(PIN_LED_GREEN, LOW);
     digitalWrite(PIN_LED_RED, HIGH);
   } else {
@@ -576,10 +587,11 @@ String generateDataLine() {
 //  line += String(roll) + ",";
 //  line += String(pitch) + ",";
 //  line += String(yaw) + ",";
-  line += String(pressure) + ",";
+//  line += String(pressure) + ",";
 //  line += String(temperature) + ",";
 //  line += String(paltitude); + ",";
-  line += String(batteryVoltage);  
+  line += String(battery1Voltage); // + ",";  
+//  line += String(battery2Voltage);
   return line;
 }
 
@@ -613,12 +625,12 @@ void startLog() {
     dataFile = SD.open(filename, O_APPEND);
     if (dataFile) {
       logState = LogState::ACTIVE;
-      Serial.println("Data logging Procceeded!");
+      //Serial.println("Data logging Procceeded!");
       displayTwoLines("Data logging", "Proceed!", u8g2_font_ncenB10_tr, 15, 40);
     } else {
-    Serial.println("Error opening file for logging.");
-    displayTwoLines("Error Proceeding", "logging", u8g2_font_ncenB10_tr, 15, 40);
-    logState = LogState::IDLE;
+      //Serial.println("Error opening file for logging.");
+      displayTwoLines("Error Proceeding", "logging", u8g2_font_ncenB10_tr, 15, 40);
+      logState = LogState::IDLE;
     }
   } else {
     // File does not exist — open in write mode and write header
@@ -626,11 +638,11 @@ void startLog() {
     if (dataFile) {
       dataFile.println("timestamp,accX,accY,accZ,gyroX,gyroY,gyroZ,magX,magY,magZ,latitude,longitude,gpsAltitude,Speed,SatCount,roll,pitch,yaw,pressure,temperature,paltitude");
       logState = LogState::ACTIVE;
-      Serial.println("Started a new logging session");
+      //Serial.println("Started a new logging session");
       displayTwoLines("Started new", "log session", u8g2_font_ncenB10_tr, 15, 40);
 
     }else {
-      Serial.println("Error opening file for logging.");
+      //Serial.println("Error opening file for logging.");
       displayTwoLines("Error opening", "log file", u8g2_font_ncenB10_tr, 15, 40);
       logState = LogState::IDLE;
     }
@@ -643,13 +655,13 @@ void stopLog(){
   if(dataFile){
     dataFile.flush();
     dataFile.close();
-    Serial.println("File closed");
-    Serial.println("Stopped data logging");
+    //Serial.println("File closed");
+    //Serial.println("Stopped data logging");
     displayTwoLines("File closed", "log Stopped!", u8g2_font_ncenB10_tr, 15, 40);
     delay(2000);
 
   }else{
-    Serial.println("File wasn't open");
+    //Serial.println("File wasn't open");
     displayTwoLines("Error", "File wasn't open!", u8g2_font_ncenB10_tr, 15, 40);
     delay(2000);
 
@@ -777,6 +789,7 @@ void calibrateIMU() {
     // Store the values 
     accXCalibBuffer[i] = accX;  accYCalibBuffer[i] = accY;  accZCalibBuffer[i] = accZ;  
     gyroXCalibBuffer[i] = gyroX; gyroYCalibBuffer[i] = gyroY;  gyroZCalibBuffer[i] = gyroZ; 
+    delay(11); // Accelerometer and gyrospcope output data rate is fixed at 99.84 Hz (10ms)
   }
     
   // Bubble Sorting to find the Median (for each sensor)
@@ -958,12 +971,49 @@ String buildJsonPayload(const String& jsonWrappedLine) {
   return "{\"mode\":\"" + modeToString() + "\",\"data\":" + jsonWrappedLine + "}";
 }
 
+
 void sendToESP(const String& msg) {
   WireESP.beginTransmission(ESP32_ADDR);
   WireESP.write(msg.c_str(), msg.length());
-  WireESP.endTransmission();
+  byte result = WireESP.endTransmission();  // byte data type of the error
 
-  espReady = false;
+  if (result != 0) {
+    if(now - LastI2CError >= 5000) // try to send again every 5 sec
+    {
+      LastI2CError = now;
+      I2CError = true;
+      
+      // Reset I2C
+      WireESP.end();
+      delay(10);
+      WireESP.begin();
+      espReady = true; // make it true to re try sending data over I2c to avoid total dead lock witout stoping the sd card being logging
+    
+      // Display error info on OLED  /////******===========================Must be commented in real time==================================*****************================///////
+      //switch (result) { 
+      //  case 1:
+      //    displayTwoLines("I2C Error:", "Buffer overflow", u8g2_font_ncenB10_tr, 40, 25);
+      //    break;
+      //  case 2:
+      //    displayTwoLines("I2C Error:", "No device found", u8g2_font_ncenB10_tr, 40, 25);
+      //    break;
+      //  case 3:
+      //    displayTwoLines("I2C Error:", "Data NACK", u8g2_font_ncenB10_tr, 40, 25);
+      //    break;
+      //  case 4:
+      //    displayTwoLines("I2C Error:", "Bus error", u8g2_font_ncenB10_tr, 40, 25);
+      //    break;
+      //  default:
+      //    displayTwoLines("I2C Error:", "Unknown code", u8g2_font_ncenB10_tr, 40, 25);
+      //    break;
+    //  }
+    //  delay(1000);  // Give the user time to see the message /////******===========================Must be commented in real time==================================*****************================///////
+    }
+  }
+  else{
+    I2CError = false;
+    espReady = false; // reset the flag pls
+  }
 }
 
 void logToServer(const String& line){
