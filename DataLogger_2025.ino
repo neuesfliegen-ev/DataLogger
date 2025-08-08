@@ -149,6 +149,10 @@ template <size_t N>
 String buildJsonPayload(const CircularBuffer<String, N>& buffer);
 void logToServer();
 void log();
+void waitForGPSLock(); 
+void updateGPSData();
+void onESPReady();
+
 
 void setup() {
   Serial.begin(9600);    // USB serial for debug
@@ -352,7 +356,7 @@ void loop() {
     //delay(1000); // 1Hz logging rate will be removed later!
     checkBattery();
     
-// UI rotation: team, battery, GPS, log state, ACK status
+    // UI rotation: team, battery, GPS, log state, ACK status
     if (now - lastDisplaySwitch > 2000) {
       lastDisplaySwitch = now;
       displayState = (displayState + 1) % 5;  // now 5 states total
@@ -391,6 +395,7 @@ void loop() {
             displayTwoLines("ACK Line:", ackHigh ? "✅ HIGH" : "LOW", u8g2_font_ncenB10_tr, 30, 30);
             //if (ackHigh) Serial.println("✅ ACK received from ESP");
             break;
+          }
         }
       }
     }
