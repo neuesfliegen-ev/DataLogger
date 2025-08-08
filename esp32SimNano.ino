@@ -119,8 +119,7 @@ int initSIM7600() {
     Serial.println("[SIM7600] No AT response. Retrying...");
     delay(1000);
   }
-0
-+
+
   Serial.println("[SIM7600] AT responded. Proceeding with initialization...");
 
   // --- ATE0 ---
