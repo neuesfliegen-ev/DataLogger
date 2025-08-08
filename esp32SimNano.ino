@@ -40,16 +40,16 @@ void receiveEvent(int howMany) {
   // 🔍 Look for mode in JSON payload
   if (latestPayload.indexOf("\"mode\":\"REALTIME\"") != -1) {
     currentMode = REALTIME;
-    Serial.println("🌀 Mode: REALTIME");
+    //Serial.println("🌀 Mode: REALTIME");
   } else if (latestPayload.indexOf("\"mode\":\"BATCH\"") != -1) {
     currentMode = BATCH;
-    Serial.println("🌀 Mode: BATCH");
+    //Serial.println("🌀 Mode: BATCH");
   } else {
-    Serial.println("⚠️ Could not determine mode from payload.");
+    //Serial.println("⚠️ Could not determine mode from payload.");
   }
 
-  Serial.println("✅ Payload received:");
-  Serial.println(latestPayload);
+  //Serial.println("✅ Payload received:");
+  //Serial.println(latestPayload);
 }
 
 void setup() {
@@ -80,18 +80,18 @@ void loop() {
   if (dataHasBeenReceived && (now - lastAttemptTime >= SEND_INTERVAL)) {
     dataHasBeenReceived = false;
 
-    Serial.println("[ESP] 📨 Forwarding payload:");
-    Serial.println(latestPayload);
+    //Serial.println("[ESP] 📨 Forwarding payload:");
+    //Serial.println(latestPayload);
 
     // Simulated send to SIM7600 here
     // bool ok = sendPayload(latestPayload);
     bool ok =  sendPayload(latestPayload);  // Placeholder for real send
 
     if (ok) {
-      Serial.println("[ESP] ✅ Payload processed!");
+      //Serial.println("[ESP] ✅ Payload processed!");
       digitalWrite(ACK_LINE, HIGH);
     } else {
-      Serial.println("[ESP] ❌ Send failed");
+    //  Serial.println("[ESP] ❌ Send failed");
       digitalWrite(ACK_LINE, LOW);
     }
 
@@ -119,7 +119,8 @@ int initSIM7600() {
     Serial.println("[SIM7600] No AT response. Retrying...");
     delay(1000);
   }
-
+0
++
   Serial.println("[SIM7600] AT responded. Proceeding with initialization...");
 
   // --- ATE0 ---
@@ -205,7 +206,7 @@ bool waitFor(String expected, int timeout) {
     }
   }
 
-  Serial.println("[SIM7600] Timeout waiting for (waitFor): " + expected);
+ // Serial.println("[SIM7600] Timeout waiting for (waitFor): " + expected);
   return false;
 }
 
@@ -225,7 +226,7 @@ bool sendAT(String cmd, String expected, int timeout) {
     if (lastResponse.indexOf(expected) != -1) return true;
   }
 
-  Serial.println("[SIM7600] Timeout waiting for: " + expected);
+  //Serial.println("[SIM7600] Timeout waiting for: " + expected);
   return false;
 }
 
@@ -233,6 +234,3 @@ bool sendAT(String cmd, String expected, int timeout) {
 bool checkSIMStatus() {
   return sendAT("AT", "OK", 1000);
 }
-
-
-
