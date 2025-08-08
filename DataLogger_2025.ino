@@ -23,11 +23,6 @@
 #define SCL_ESP    6
 #define BUCKET_SIZE 5
 
-// === Calibration constants ===
-#define CALIB_SAFETY_CHECK 1    // boolean
-#define CALIB_DEBUG 0
-#define CALIB_MIN_ACCURACY 60   // Recommended: 60. Maximum: 90
-
 TwoWire WireESP(SDA_ESP, SCL_ESP);  // Second I2C bus on Nano BLE Sense Rev2
 
 // Create GPS parser
@@ -42,13 +37,15 @@ const float R2 = 505.0;  // 510 Ohms
 constexpr uint8_t PIN_LED_RED = 8; 
 constexpr uint8_t PIN_LED_GREEN = 9; 
 constexpr uint8_t PIN_LED_BLUE = 7; 
-constexpr uint8_t PIN_BAT_VSENSE = A1;
+constexpr uint8_t PIN_BAT1_VSENSE = A1;
+constexpr uint8_t PIN_BAT2_VSENSE = A2;
 
 // === Battery Indicator Values ===
 constexpr uint16_t ADC_MAX = 4095; // at 12-bit resolution
 constexpr float VREF = 3.30F; // Volts 
 constexpr float BAT_VLOW = 3.50F; // Volts at low battery
-float batteryVoltage = 0;
+float battery1Voltage = 0;
+float battery2Voltage = 0;
 
 
 // === OLED Setup (SH1106 I2C) ===
@@ -101,21 +98,21 @@ float magX_off  = 0, magY_off  = 0, magZ_off  = 0;
 float preAccX, preAccY, preAccZ = 0;
 float preGyroX, preGyroY, preGyroZ = 0;
 float preMagX, preMagY, preMagZ;
-bool retryCalibration = 0;
 
 
 // ====== Mode and Buffer Settings FOR ESP Sending ======
 enum Mode { REALTIME, BATCH };
 Mode currentMode = REALTIME;  // default mode
-
 CircularBuffer<String, BUCKET_SIZE> sensorBuffer;
 
 volatile bool espReady = false;
+volatile bool I2CError = false;
 bool awaitingAck = false;
 
 //  ====== logging parameters ======
 unsigned long now = 0;
 unsigned long lastCollectTime = 0; 
+unsigned long  LastI2CError = 0;
 
 // === Function Declarations ===
 void displayToScreen(const char str[], u8g2_uint_t x, u8g2_uint_t y);
@@ -126,14 +123,11 @@ String generateDataLine();
 void logToSD();
 void calibrateIMU(); 
 void calibrateIMU2();
-bool fullSpanCalibration(int16_t, int16_t, int16_t, int16_t, int16_t, int16_t);
 void generateFilename(); 
 void readNextLineFromSD();
 
 // button logic and voltage divider!
-void onButtonPress();
 bool buttonReleased();
-void waitForButtonPressed();
 void updateBatteryVoltage();
 void checkBattery();
 void startLog();
@@ -153,7 +147,8 @@ void setup() {
   pinMode(PIN_LED_RED, OUTPUT);
   pinMode(PIN_LED_GREEN, OUTPUT);
   pinMode(PIN_LED_BLUE, OUTPUT);
-  pinMode(PIN_BAT_VSENSE, INPUT);
+  pinMode(PIN_BAT1_VSENSE, INPUT);
+  pinMode(PIN_BAT2_VSENSE, INPUT);
   analogReadResolution(12); 
   checkBattery();
 
@@ -246,27 +241,27 @@ void setup() {
   generateFilename();
 
   //============ IMU CALIBIRATION. =========//
-  // Accelerometer & Gyroscope, stationary
-  Serial.println("IMU Calibration 1 (Acc & Gyro): Press button");
-  displayTwoLines("IMU Calibration 1:", "Press button", u8g2_font_ncenB10_tr, 10, 20);
-  waitForButtonPressed();
-  Serial.println("Press, once again, to end calibation 1");
-  displayTwoLines("End?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
-  waitForButtonPressed();
-  
+  Serial.println("Start IMU Offset Calibration? Press button");
+  displayTwoLines("Offset Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+
+  while(!buttonInterruptFlag) {
+    yield();    // Nano BLE 33, RTOS native instructions. Doesn't starve the processor with delay(500) and ensures proper waiting of the button pressed (even though our current button doesnt have that problem).
+  }
+  buttonInterruptFlag = false; 
+
   calibrateIMU();
 
-  // Magnetometer, victory dance!
-  Serial.println("IMU Calibration 2 (Magnetometer): Press button");
-  displayTwoLines("Magnet. Calibration:", "Press button", u8g2_font_ncenB10_tr, 10, 20);
-  waitForButtonPressed();
-  do {
-    if (retryCalibration == 1) {
-      Serial.println("Calibration failed... Trying again");
-      displayTwoLines("CALIB FAIL...", "Trying Again", u8g2_font_ncenB10_tr, 10, 20);
-    }
-    calibrateIMU2();
-  } while (retryCalibration);
+  delay(2000);
+  //IMU MAG Calibiration
+  Serial.println("Start IMU MAG Calibration? Press button");
+  displayTwoLines("MAG Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+
+  while(!buttonInterruptFlag) {
+    yield();    // Nano BLE 33, RTOS native instructions. Doesn't starve the processor with delay(500) and ensures proper waiting of the button pressed (even though our current button doesnt have that problem).
+  }
+  buttonInterruptFlag = false; 
+
+  calibrateIMU2();
 
   Serial.println("IMU calibration complete.");  
   displayTwoLines("IMU calibration", "complete.", u8g2_font_ncenB10_tr, 10, 20);
@@ -285,7 +280,7 @@ void setup() {
   while (!buttonInterruptFlag) {
     updateBatteryVoltage();
 
-    if (batteryVoltage <= BAT_VLOW) {
+    if (battery1Voltage < BAT_VLOW || battery2Voltage < BAT_VLOW) {
       // Low battery: show warning and red LED only
       digitalWrite(PIN_LED_GREEN, LOW);
       digitalWrite(PIN_LED_RED, HIGH);
@@ -305,7 +300,7 @@ void setup() {
 
           case 1: { // Battery level
             char buf[20];
-            snprintf(buf, sizeof(buf), "%.2f V", batteryVoltage);
+            snprintf(buf, sizeof(buf), "%.2f V, %.2f V", battery1Voltage, battery2Voltage);
             displayTwoLines("Battery level:", buf, u8g2_font_ncenB10_tr, 15, 50);
             break;
           }
@@ -359,8 +354,8 @@ void loop() {
 
         case 1: {
           char buf[20];
-          snprintf(buf, sizeof(buf), "%.2f V", batteryVoltage);
-          displayTwoLines("Battery level:", buf, u8g2_font_ncenB10_tr, 15, 50);
+          snprintf(buf, sizeof(buf), "%.2f V, %.2f V", battery1Voltage, battery2Voltage);
+          displayTwoLines("Battery1,2 level:", buf, u8g2_font_ncenB10_tr, 15, 50);
           break;
         }
 
@@ -376,10 +371,17 @@ void loop() {
 
         case 4: {
           // Show ACK line status from ESP
-          bool ackHigh = digitalRead(ACK_LINE) == HIGH;
-          displayTwoLines("ACK Line:", ackHigh ? "✅ HIGH" : "LOW", u8g2_font_ncenB10_tr, 30, 30);
-          if (ackHigh) Serial.println("✅ ACK received from ESP");
-          break;
+          if(I2CError == true)
+          {
+            displayTwoLines("I2C Error:", "need Debug", u8g2_font_ncenB10_tr, 40, 25);
+            break;  // for readability 
+          }
+          else{
+            bool ackHigh = digitalRead(ACK_LINE) == HIGH;
+            displayTwoLines("ACK Line:", ackHigh ? "✅ HIGH" : "LOW", u8g2_font_ncenB10_tr, 30, 30);
+            //if (ackHigh) Serial.println("✅ ACK received from ESP");
+            break;
+          }
         }
       }
     }
@@ -406,7 +408,6 @@ void updateIMUData() {
     IMU.readMagneticField(preMagX, preMagY, preMagZ);
     magX = preMagX - magX_off;
     magY = preMagY - magY_off;
-    magZ = preMagZ - magZ_off;
   }
 }
 
@@ -505,9 +506,10 @@ void updateGPSData() {
 
 // === Updates current battery voltage ===
 void updateBatteryVoltage(){
-  batteryVoltage = analogRead(PIN_BAT_VSENSE) * VREF / ADC_MAX / (R1 /(R1 + R2)); //
-  //Serial.println(analogRead(PIN_BAT_VSENSE) );
-  //Serial.println(batteryVoltage);
+  battery1Voltage = analogRead(PIN_BAT1_VSENSE) * VREF / ADC_MAX / (R1 /(R1 + R2)); //
+  battery2Voltage = analogRead(PIN_BAT2_VSENSE) * VREF / ADC_MAX / (R1 /(R1 + R2)); //
+  //Serial.println(analogRead(PIN_BAT1_VSENSE) );
+  //Serial.println(battery1Voltage);
 
 }
 
@@ -515,7 +517,7 @@ void updateBatteryVoltage(){
 void checkBattery(){
   updateBatteryVoltage();
 
-  if(batteryVoltage <= BAT_VLOW){ //!!!check LED connection for HIGH/LOW assignment
+  if(battery1Voltage < BAT_VLOW || battery2Voltage < BAT_VLOW){ //!!!check LED connection for HIGH/LOW assignment
     digitalWrite(PIN_LED_GREEN, LOW);
     digitalWrite(PIN_LED_RED, HIGH);
   } else {
@@ -549,13 +551,6 @@ void onButtonPress() {
   }
 }
 
-void waitForButtonPressed() {
-  while(!buttonInterruptFlag) {
-    yield();    // Nano BLE 33, RTOS native instructions. Doesn't starve the processor with delay(500) and ensures proper waiting of the button pressed (even though our current button doesnt have that problem).
-  }
-  buttonInterruptFlag = false; 
-}
-
 String generateDataLine() {
   String line = "";
   line += String(millis()) + ",";
@@ -576,10 +571,11 @@ String generateDataLine() {
 //  line += String(roll) + ",";
 //  line += String(pitch) + ",";
 //  line += String(yaw) + ",";
-  line += String(pressure) + ",";
+ // line += String(pressure) + ",";
 //  line += String(temperature) + ",";
 //  line += String(paltitude); + ",";
-  line += String(batteryVoltage);  
+  line += String(battery1Voltage); // + ",";  
+  //line += String(battery2Voltage);  
   return line;
 }
 
@@ -613,10 +609,10 @@ void startLog() {
     dataFile = SD.open(filename, O_APPEND);
     if (dataFile) {
       logState = LogState::ACTIVE;
-      Serial.println("Data logging Procceeded!");
+      //Serial.println("Data logging Procceeded!");
       displayTwoLines("Data logging", "Proceed!", u8g2_font_ncenB10_tr, 15, 40);
     } else {
-    Serial.println("Error opening file for logging.");
+    //Serial.println("Error opening file for logging.");
     displayTwoLines("Error Proceeding", "logging", u8g2_font_ncenB10_tr, 15, 40);
     logState = LogState::IDLE;
     }
@@ -626,11 +622,11 @@ void startLog() {
     if (dataFile) {
       dataFile.println("timestamp,accX,accY,accZ,gyroX,gyroY,gyroZ,magX,magY,magZ,latitude,longitude,gpsAltitude,Speed,SatCount,roll,pitch,yaw,pressure,temperature,paltitude");
       logState = LogState::ACTIVE;
-      Serial.println("Started a new logging session");
+      //Serial.println("Started a new logging session");
       displayTwoLines("Started new", "log session", u8g2_font_ncenB10_tr, 15, 40);
 
     }else {
-      Serial.println("Error opening file for logging.");
+      //Serial.println("Error opening file for logging.");
       displayTwoLines("Error opening", "log file", u8g2_font_ncenB10_tr, 15, 40);
       logState = LogState::IDLE;
     }
@@ -643,13 +639,13 @@ void stopLog(){
   if(dataFile){
     dataFile.flush();
     dataFile.close();
-    Serial.println("File closed");
-    Serial.println("Stopped data logging");
+    //Serial.println("File closed");
+    //Serial.println("Stopped data logging");
     displayTwoLines("File closed", "log Stopped!", u8g2_font_ncenB10_tr, 15, 40);
     delay(2000);
 
   }else{
-    Serial.println("File wasn't open");
+   // Serial.println("File wasn't open");
     displayTwoLines("Error", "File wasn't open!", u8g2_font_ncenB10_tr, 15, 40);
     delay(2000);
 
@@ -777,6 +773,9 @@ void calibrateIMU() {
     // Store the values 
     accXCalibBuffer[i] = accX;  accYCalibBuffer[i] = accY;  accZCalibBuffer[i] = accZ;  
     gyroXCalibBuffer[i] = gyroX; gyroYCalibBuffer[i] = gyroY;  gyroZCalibBuffer[i] = gyroZ; 
+
+    // Accelerometer and gyrospcope output data rate is fixed at 99.84 Hz (10ms)
+    delay(11); // CHANGE THIS USING YIELD
   }
     
   // Bubble Sorting to find the Median (for each sensor)
@@ -826,22 +825,18 @@ void calibrateIMU() {
   accX_off = accXCalibBuffer[middle];  accY_off = accYCalibBuffer[middle];  accZ_off = accZCalibBuffer[middle] - 1;
   gyroX_off = gyroXCalibBuffer[middle];  gyroY_off = gyroYCalibBuffer[middle];  gyroZ_off = gyroZCalibBuffer[middle];
 
-  if (CALIB_DEBUG) {
-    printIMUOffsetsAndReadings();
-  }
+  printIMUOffsetsAndReadings();
 }
 
 // === IMU Calibration (Magnetometer) ===
 void calibrateIMU2() {
-  // Positioning time: max 20'' per orientation. Total 6 x 20'' = 2'
-  // Wait in each position to sample: 5''. Total 6 x 5'' = 30''
-  // Magnetometer output data rate is fixed at 20 Hz.
-  const int MAGNET_CALIB_SAMPLES = 3000;
+  // Calculate this buffer depending on the maximum sampling rate + maximum calibration time that I will use.
+  const int MAGNET_CALIB_SAMPLES = 6000;   // Considering the max 100 Hz sampling rate and 60s of calibration (far beyond the needed, probably)
 
-  // Three int16_t buffers take 18 kB (7% of RAM) temporarily. (Ideally they'd be float buffers but the Thread's assigned stack gets exceeded)
+  // It would be slightly better to have "float" buffers, but make sure of the IMU sampling rate. Two int16_t buffers take 23 kB (9% of RAM) temporarily.
   int16_t magnXCalibBuffer[MAGNET_CALIB_SAMPLES];
   int16_t magnYCalibBuffer[MAGNET_CALIB_SAMPLES];
-  int16_t magnZCalibBuffer[MAGNET_CALIB_SAMPLES]; // Only if Six-Axis Calibration method is used.
+  //float magnZCalibBuffer[MAGNET_CALIB_SAMPLES]; // Probably not needed. Only if Six-Axis Calibration method is used.
 
   Serial.println("END Calibration? Press button");
   displayTwoLines("END Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
@@ -855,55 +850,37 @@ void calibrateIMU2() {
 
     IMU.readMagneticField(magX, magY, magZ);
 
-    magnXCalibBuffer[j] = magX;  magnYCalibBuffer[j] = magY; magnZCalibBuffer[j] = magZ;
+    magnXCalibBuffer[j] = magX;  magnYCalibBuffer[j] = magY;
     j++;
   }
 
-  // Find maximums and minimums. The other values may be necessary
-  int16_t xMin = magnXCalibBuffer[0]; int16_t yMin = magnYCalibBuffer[0]; int16_t zMin = magnZCalibBuffer[0];
-  int16_t xMax = xMin;                int16_t yMax = yMin;                int16_t zMax = zMin;
+  // ADD CODE THAT MAKES SURE THAT THE INITIALIZATION WAS LONG ENOUGH AND THAT ALL POSITIVE AND NEGATIVE VALUES ARE RECORDED. ELSE, TRY AGAIN
 
-  for (int i = 0; i < j-1; ++i) {
-      int16_t x = magnXCalibBuffer[i]; int16_t y = magnYCalibBuffer[i]; int16_t z = magnZCalibBuffer[i];
+  // Find maximums and minimums. The other values will be necessary to double check correct initialization
+  int16_t xMin = magnXCalibBuffer[0];
+  int16_t xMax = xMin;
+  int16_t yMin = magnYCalibBuffer[0];
+  int16_t yMax = yMin;
 
-      if (x < xMin) {xMin = x;} else if (x > xMax) {xMax = x;}
-      if (y < yMin) {yMin = y;} else if (y > yMax) {yMax = y;}
-      if (z < zMin) {zMin = z;} else if (z > zMax) {zMax = z;}
+  for (int i = 1; i < j-1; ++i) {
+      int16_t x = magnXCalibBuffer[i];
+      int16_t y = magnYCalibBuffer[i];
+
+      if (x < xMin) xMin = x;
+      if (x > xMax) xMax = x;
+
+      if (y < yMin) yMin = y;
+      if (y > yMax) yMax = y;
   }
 
   // Hard-iron offsets
   float bx = 0.5f * (xMax + xMin);
   float by = 0.5f * (yMax + yMin);
-  float bz = 0.5f * (zMax + zMin);
 
-  magX_off = bx; magY_off = by; magZ_off = bz;
-
-  // (DEBUGGING) Min & Max axis display
-  if (CALIB_DEBUG) {
-      Serial.print(F("xMax: ")); Serial.print(xMax); Serial.print(F(" // xMin: ")); Serial.println(xMin);
-      Serial.print(F("yMax: ")); Serial.print(yMax); Serial.print(F(" // yMin: ")); Serial.println(yMin);
-      Serial.print(F("zMax: ")); Serial.print(zMax); Serial.print(F(" // zMin: ")); Serial.println(zMin);
-  }
-
-  // Calibration reliability check-up
-  if (CALIB_SAFETY_CHECK == 1) {
-    // If calibration lasted less than 30'' or there's a lack of positive || negative values recorded, then the calibration isn't reliable
-    if (j < 600 || fullSpanCalibration(xMin, xMax, yMin, yMax, zMin, zMax)) {
-      retryCalibration = 1;
-    }
-  }
+  magX_off  = bx, magY_off  = by;
 } // buffers go out of scope here, RAM reclaimed automatically
 
-// Helper function. Checks that the recorded range sits on (ACCURACY)% of the expected span range. Otherwise, the calibration isn't reliable.
-bool fullSpanCalibration(int16_t xMin, int16_t xMax, int16_t yMin, int16_t yMax, int16_t zMin, int16_t zMax) {
-  if (((xMax - xMin) < CALIB_MIN_ACCURACY) || ((yMax - yMin) < CALIB_MIN_ACCURACY) || ((zMax - zMin) < CALIB_MIN_ACCURACY)) {
-    return 1;
-  } else {
-    return 0;
-  }
-}
 
-// (DEBUGGING) Helper function
 void printIMUOffsetsAndReadings() {
   Serial.println("=== IMU Offsets ===");
   Serial.print("accX_off: "); Serial.print(accX_off);
@@ -958,13 +935,69 @@ String buildJsonPayload(const String& jsonWrappedLine) {
   return "{\"mode\":\"" + modeToString() + "\",\"data\":" + jsonWrappedLine + "}";
 }
 
+// void sendToESP(const String& msg) {
+//   WireESP.beginTransmission(ESP32_ADDR);
+//   WireESP.write(msg.c_str(), msg.length());
+//   byte result = WireESP.endTransmission();
+
+//   if (result != 0) {
+//     Serial.print("I2C transmission failed, code: ");
+//     Serial.println(result);
+
+//     // Reset everything the aggressive way
+//     WireESP.end();
+//     delay(10);
+//     WireESP.begin();  // Optionally pass SDA, SCL if custom pins used
+//   }
+
+//   espReady = false;
+// }
+
 void sendToESP(const String& msg) {
   WireESP.beginTransmission(ESP32_ADDR);
   WireESP.write(msg.c_str(), msg.length());
-  WireESP.endTransmission();
+  byte result = WireESP.endTransmission();  // byte data type of the error
 
-  espReady = false;
+  if (result != 0) {
+    // Reset I2C
+    WireESP.end();
+    delay(10);
+    WireESP.begin();
+
+    if(now - LastI2CError >= 5000) // try to send again every 5 sec
+    {
+      I2CError = false;
+      espReady = true; // makw it true to re try sending data over I2c to avoid total dead lock witout stoping the sd card being logging
+    }
+    // Display error info on OLED  /////******===========================Must be commented in real time==================================*****************================///////
+    switch (result) {
+      case 1:
+        displayTwoLines("I2C Error:", "Buffer overflow", u8g2_font_ncenB10_tr, 40, 25);
+        break;
+      case 2:
+        displayTwoLines("I2C Error:", "No device found", u8g2_font_ncenB10_tr, 40, 25);
+        break;
+      case 3:
+        displayTwoLines("I2C Error:", "Data NACK", u8g2_font_ncenB10_tr, 40, 25);
+        break;
+      case 4:
+        displayTwoLines("I2C Error:", "Bus error", u8g2_font_ncenB10_tr, 40, 25);
+        break;
+      default:
+        displayTwoLines("I2C Error:", "Unknown code", u8g2_font_ncenB10_tr, 40, 25);
+        break;
+    }
+
+    delay(1000);  // Give the user time to see the message /////******===========================Must be commented in real time==================================*****************================///////
+  }
+  else{
+    I2CError = false;
+    espReady = false;
+  }
+
 }
+
+
 
 void logToServer(const String& line){
   //Serial.println(espReady);
