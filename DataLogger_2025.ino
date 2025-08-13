@@ -6,6 +6,7 @@
 #include <Arduino_LPS22HB.h> // Barometric sensor (LPS22HB)
 #include <TinyGPSPlus.h>
 #include <Arduino.h>
+#include <ArduinoBLE.h>
 #include <CircularBuffer.hpp>
 
 // team number 
@@ -27,6 +28,9 @@
 #define CALIB_SAFETY_CHECK 1    // boolean
 #define CALIB_DEBUG 0
 #define CALIB_MIN_ACCURACY 60   // Recommended: 60. Maximum: 90
+
+// === BLE constants ===
+#define WITH_BLUETOOTH 1      // (Mechanical -> 0 / BLE -> 1) button
 
 TwoWire WireESP(SDA_ESP, SCL_ESP);  // Second I2C bus on Nano BLE Sense Rev2
 
@@ -96,7 +100,7 @@ const unsigned long WRITE_INTERVAL = 1000;  // Write to SD every 1 sec
 const unsigned long FLUSH_INTERVAL = 10000;  // Flush SD every 5 sec
 String dataBuffer = ""; // Buffer for batching data
 
-// === Calibration Variables ===
+// ====== Calibration Variables ======
 float accX_off  = 0, accY_off  = 0, accZ_off  = 0;
 float gyroX_off = 0, gyroY_off = 0, gyroZ_off = 0;
 float magX_off  = 0, magY_off  = 0, magZ_off  = 0;
@@ -105,6 +109,20 @@ float preGyroX, preGyroY, preGyroZ = 0;
 float preMagX, preMagY, preMagZ;
 bool retryCalibration = 0;
 
+// ====== BLE Variables ======
+/* A BLE UUID is a 128-bit value written in hexadecimal, like: 19B10000-E8F2-537E-4F6C-D104768A1214
+   This format is standardized by the ITU (International Telecommunication Union).
+   The idea is that the probability of two people picking the same UUID by accident is essentially zero. 
+*/
+BLEService svc("19B10000-E8F2-537E-4F6C-D104768A1214");  // svc UUID — Universally Unique Identifier
+BLEByteCharacteristic triggerChar(                       // triggerChar UUID, not the same: "0001"
+  "19B10001-E8F2-537E-4F6C-D104768A1214",                
+  BLEWrite | BLEWriteWithoutResponse
+);
+BLEDevice central;                          // Will contrain information about my central (phone)
+uint8_t v = 0;                              // The message I am sending from my central
+volatile bool triggerRequested = false;     // volatile variables to be used in Even Handlers. An event handler can be interrupted by an ISR I guess, so keep (atomic) 1 byte size data type like "bool"
+volatile bool bleConnected = false;
 
 // ====== Mode and Buffer Settings FOR ESP Sending ======
 enum Mode { REALTIME, BATCH };
@@ -131,10 +149,13 @@ void logToSD();
 void calibrateIMU(); 
 void calibrateIMU2();
 bool fullSpanCalibration(int16_t, int16_t, int16_t, int16_t, int16_t, int16_t);
+void printIMUOffsetsAndReadings();
 void generateFilename(); 
 void readNextLineFromSD();
 
-// button logic and voltage divider!
+// button logic, voltage divider, logging, BLE!
+void onTriggerWritten(BLEDevice, BLECharacteristic);    // Event Handler (RTOS). BLEDevice and BLECharacteristics are the data types
+void initializeBLE();
 void onButtonPress();
 bool buttonReleased();
 void waitForButtonPressed();
@@ -143,7 +164,6 @@ void checkBattery();
 void startLog();
 void stopLog();
 void updateLogging(); // starts logging at button *release*
-void printIMUOffsetsAndReadings();
 String buildJsonPayload(const String& jsonWrappedLine);
 template <size_t N>
 String buildJsonPayload(const CircularBuffer<String, N>& buffer);
@@ -165,6 +185,11 @@ void setup() {
   pinMode(PIN_BAT2_VSENSE, INPUT);
   analogReadResolution(12); 
   checkBattery();
+
+  // BLE
+  if (WITH_BLUETOOTH == 1) {
+    initializeBLE();
+  }
 
   // Button 
   pinMode(PIN_BUTTON, INPUT_PULLUP);
@@ -426,7 +451,6 @@ void updateIMUData() {
   }
 }
 
-
 // === Barometer Data Update ===
 void updateBarometerData() {
   pressure = BARO.readPressure(); // in kPa
@@ -566,10 +590,21 @@ void onButtonPress() {
 }
 
 void waitForButtonPressed() {
-  while(!buttonInterruptFlag) {
-    yield();    // Nano BLE 33, RTOS native instructions. Doesn't starve the processor with delay(500) and ensures proper waiting of the button pressed (even though our current button doesnt have that problem).
-  }
-  buttonInterruptFlag = false; 
+  if (WITH_BLUETOOTH == 1) {
+    while (!triggerRequested) {
+      yield();
+      BLE.poll();   
+      // let BLE stack run; otherwise it starves. This is because yield() lets the scheduler loop run, but the stack isnt integrated thereand it can't run
+    }
+
+    v = 0;
+    triggerRequested = false;
+    } else if (WITH_BLUETOOTH == 0) {
+      while(!buttonInterruptFlag) {
+        yield();
+      }
+      buttonInterruptFlag = false; 
+    }
 }
 
 String generateDataLine() {
@@ -786,6 +821,7 @@ void calibrateIMU() {
     // Waits until all data is ready for collection
     while (!IMU.accelerationAvailable() || !IMU.gyroscopeAvailable()) {
       yield();
+      BLE.poll();
     }
 
     IMU.readAcceleration(accX, accY, accZ);
@@ -866,9 +902,11 @@ void calibrateIMU2() {
 
   int j = 0;
   buttonInterruptFlag = false;
-  while(!buttonInterruptFlag && j < MAGNET_CALIB_SAMPLES) {
+  triggerRequested = false;
+  while(!buttonInterruptFlag && !triggerRequested && j < MAGNET_CALIB_SAMPLES) {
     while (!IMU.magneticFieldAvailable()) {
       yield();
+      BLE.poll();
     }
 
     IMU.readMagneticField(magX, magY, magZ);
@@ -905,10 +943,10 @@ void calibrateIMU2() {
 
   // Calibration reliability check-up
   if (CALIB_SAFETY_CHECK == 1) {
-    // If calibration lasted less than 30'' or there's a lack of positive || negative values recorded, then the calibration isn't reliable
-    if (j < 600 || fullSpanCalibration(xMin, xMax, yMin, yMax, zMin, zMax)) {
+    // If calibration lasted less than ~5'' or there's a lack of positive || negative values recorded, then the calibration isn't reliable
+    if (j < 150 || fullSpanCalibration(xMin, xMax, yMin, yMax, zMin, zMax)) {
       retryCalibration = 1;
-    }
+    } else { retryCalibration = 0; }
   }
 } // buffers go out of scope here, RAM reclaimed automatically
 
@@ -1047,4 +1085,45 @@ void log() {
   String line = generateDataLine(); 
   logToSD(line);
   logToServer(line);
+}
+
+// === BLE Inititialization ===
+void initializeBLE() {
+  while (!BLE.begin()) { yield(); }     // Make sure the Bluetooth module starts
+  BLE.setLocalName("NFC25-Datalogger");
+  BLE.setAdvertisedService(svc);        // This call tells ArduinoBLE: include this service’s UUID in the advertising packets. Why? So that a central (phone) can filter scans for devices that have a specific service without connecting first.
+  svc.addCharacteristic(triggerChar);   // Actual data/command. One service can have multiple characteristics
+  BLE.addService(svc);
+
+  // Set Event Handlers, like ISR but not hardware driven, involved in the RTOS
+  triggerChar.setEventHandler(BLEWritten, onTriggerWritten);
+  BLE.setEventHandler(BLEConnected, onConnect);
+  BLE.setEventHandler(BLEDisconnected, onDisconnect);
+
+  BLE.advertise();                      // Starts advertising: sending out periodic BLE “I'm here” packets
+}
+
+/* Event Handler, RTOS functionality. Works like an ISR but not hardware driven.
+   The parameters "central" and "characteristic" seem unused but are crucial */
+void onTriggerWritten(BLEDevice central, BLECharacteristic characteristic) {
+  v = 0;
+  triggerChar.readValue(v);
+
+  if (v == 0x01) {
+    triggerRequested = true;
+  }
+}
+
+// Event Handler, BLE
+void onConnect(BLEDevice central) {
+  bleConnected = true;      
+  central = BLE.central();       
+  // Now we can operate methods for this object Central (my phone).   
+  // It updates because different centrals (phones) could connect at different stages of the program 
+}
+
+// Event Handler, BLE
+void onDisconnect(BLEDevice central) {
+  bleConnected = false;
+  BLE.advertise();                   
 }
