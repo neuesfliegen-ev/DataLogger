@@ -74,7 +74,17 @@ float magX, magY, magZ;
 float latitude, longitude, gpsAltitude, Speed = 0.0;  //&speed in km/h
 int SatCount = 0; 
 float pressure, paltitude, temperature; 
-float roll, pitch, yaw = 0.0;
+
+// === Attitude Angle Variables ===
+float roll = 0, pitch = 0, yaw = 0;
+const int sizeArray = 8;
+float accXArray[sizeArray], accYArray[sizeArray], accZArray[sizeArray];
+float magXArray[sizeArray], magYArray[sizeArray], magZArray[sizeArray];
+float accXMedian, accYMedian, accZMedian;
+float magXMedian, magYMedian, magZMedian;
+bool mediansReady = false;
+int attitudeCounter = 0;
+constexpr float RAD2DEG = 57.2957795f;  // 180/pi
 
 // === Display Variables ===
 unsigned long lastDisplaySwitch = 0; // Keep track of the last time the display was updated
@@ -119,9 +129,9 @@ BLEByteCharacteristic triggerChar(                       // triggerChar UUID, no
   "19B10001-E8F2-537E-4F6C-D104768A1214",                
   BLEWrite | BLEWriteWithoutResponse
 );
-BLEDevice central;                          // Will contrain information about my central (phone)
+BLEDevice central;                          // Will contain information about my central (phone)
 uint8_t v = 0;                              // The message I am sending from my central
-volatile bool triggerRequested = false;     // volatile variables to be used in Even Handlers. An event handler can be interrupted by an ISR I guess, so keep (atomic) 1 byte size data type like "bool"
+volatile bool triggerRequested = false;     // volatile variables to be used in Event Handlers. An event handler can be interrupted by an ISR I guess, so keep (atomic) 1 byte size data type like "bool"
 volatile bool bleConnected = false;
 
 // ====== Mode and Buffer Settings FOR ESP Sending ======
@@ -150,6 +160,10 @@ void calibrateIMU();
 void calibrateIMU2();
 bool fullSpanCalibration(int16_t, int16_t, int16_t, int16_t, int16_t, int16_t);
 void printIMUOffsetsAndReadings();
+void attitudeAngles();
+void attitudeArrays();
+float median(float arr[], int n);
+void bubbleSort(float arr[], int n);
 void generateFilename(); 
 void readNextLineFromSD();
 
@@ -372,6 +386,8 @@ void loop() {
 
     updateLogging();
     updateIMUData();
+    attitudeArrays();
+    attitudeAngles();
     updateBarometerData();
     updateGPSData();
     log();
@@ -1126,4 +1142,62 @@ void onConnect(BLEDevice central) {
 void onDisconnect(BLEDevice central) {
   bleConnected = false;
   BLE.advertise();                   
+}
+
+void bubbleSort(float arr[], int n) {
+    for (int i = 0; i < n - 1; i++) {
+        for (int j = 0; j < n - i - 1; j++) {
+            if (arr[j] > arr[j + 1]) {
+                float temp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = temp;
+            }
+        }
+    }
+}
+
+float median(float arr[], int n) {
+    // assume arr[] is already sorted
+    if (n % 2 == 0) {
+        int mid = n / 2;
+        return (arr[mid - 1] + arr[mid]) / 2.0f;
+    } else {
+        return arr[n / 2];
+    }
+}
+
+// This arrays of Acc & Mag are used for improved attitude calculations
+void attitudeArrays() {
+  accXArray[attitudeCounter] = accX; accYArray[attitudeCounter] = accY; accZArray[attitudeCounter] = accZ;
+  magXArray[attitudeCounter] = magX; magYArray[attitudeCounter] = magY; magZArray[attitudeCounter] = magZ;
+  attitudeCounter++;
+
+  if(attitudeCounter == sizeArray) { 
+    bubbleSort(accXArray, sizeArray); bubbleSort(accYArray, sizeArray); bubbleSort(accZArray, sizeArray);
+    bubbleSort(magXArray, sizeArray); bubbleSort(magYArray, sizeArray); bubbleSort(magZArray, sizeArray);
+
+    accXMedian = median(accXArray, sizeArray); accYMedian = median(accYArray, sizeArray); accZMedian = median(accZArray, sizeArray);
+    magXMedian = median(magXArray, sizeArray); magYMedian = median(magYArray, sizeArray); magZMedian = median(magZArray, sizeArray);
+
+    attitudeCounter = 0;
+    mediansReady = true;
+    }
+}
+
+void attitudeAngles() {
+  if (mediansReady) {
+    roll  = atan2f(accYMedian, accZMedian);
+    pitch = atan2f(-accXMedian, sqrtf(accYMedian*accYMedian + accZMedian*accZMedian));
+
+    // tilt-compensated mag
+    float mx_h = magXMedian * cosf(pitch) + magZMedian * sinf(pitch);
+    float my_h = magXMedian * sinf(roll) * sinf(pitch) + magYMedian * cosf(roll) - magZMedian * sinf(roll) * cosf(pitch);
+
+    yaw = atan2f(-my_h, mx_h);
+
+    // change from radians to degrees
+    roll  = roll * RAD2DEG;    pitch = pitch * RAD2DEG;    yaw = yaw * RAD2DEG;
+
+    mediansReady = false;
+  }
 }
