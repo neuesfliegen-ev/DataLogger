@@ -1010,8 +1010,9 @@ String modeToString() {
 }
 
 // For real-time mode (pass a pre-bracketed JSON string like "[" + line + "]")
+// Will automatically create new node with filename if it doesn't already exist
 String buildJsonPayload(const String& jsonWrappedLine) {
-  return "{\"mode\":\"" + modeToString() + "\",\"data\":" + jsonWrappedLine + "}";
+  return "{\"" + filename + "\": {\"mode\":\"" + modeToString() + "\",\"data\":" + jsonWrappedLine + "}}";
 }
 
 
