@@ -9,7 +9,7 @@
 #include <CircularBuffer.hpp>
 
 // team number 
-#define TEAM_NUMBER 1
+#define IDataLoggerId 1
 #define MIN_SATS_REQUIRED 4
 #define GPS_LOCK_TIMEOUT_MS 30000  // 30 seconds
 #define loggingPeriod 100 // logging Period in milli seconds. Logging Freq= 1/ loggingPeriod KHz
@@ -32,6 +32,70 @@ TwoWire WireESP(SDA_ESP, SCL_ESP);  // Second I2C bus on Nano BLE Sense Rev2
 
 // Create GPS parser
 TinyGPSPlus gps;
+//////////////////////////////////////////////
+//        RemoteXY include library          //
+//////////////////////////////////////////////
+
+// you can enable debug logging to Serial at 115200
+//#define REMOTEXY__DEBUGLOG    
+
+// RemoteXY select connection mode and include library 
+#define REMOTEXY_MODE__ARDUINOBLE
+
+#include <ArduinoBLE.h>
+
+// RemoteXY connection settings 
+#define REMOTEXY_BLUETOOTH_NAME "Datalogger1"
+#define REMOTEXY_ACCESS_PASSWORD "NFC123"
+
+
+#include <RemoteXY.h>
+
+// RemoteXY GUI configuration  
+#pragma pack(push, 1)  
+uint8_t RemoteXY_CONF[] =   // 242 bytes
+  { 255,4,0,20,0,235,0,19,0,0,0,68,97,116,97,108,111,103,103,101,
+  114,49,0,25,1,200,84,1,1,12,0,129,65,2,58,10,64,17,68,97,
+  116,97,32,76,111,103,103,101,114,0,67,47,34,100,10,5,135,26,16,129,
+  166,37,21,4,64,2,79,114,105,101,110,116,97,116,105,111,110,0,1,86,
+  48,21,21,0,95,31,0,67,121,4,11,8,77,2,26,1,129,85,25,24,
+  7,64,2,83,116,97,116,117,115,58,0,129,85,72,23,4,64,95,80,117,
+  115,104,32,66,117,116,116,111,110,0,12,163,23,29,5,194,30,26,49,0,
+  50,0,52,0,52,0,12,163,43,29,5,192,30,26,49,0,50,0,12,7,
+  21,29,6,199,30,26,49,0,50,0,51,0,52,0,53,0,54,0,55,0,
+  56,0,57,0,129,2,15,44,4,64,2,84,101,97,109,32,78,117,109,98,
+  101,114,32,83,101,108,101,99,116,111,114,0,129,157,17,44,4,64,2,70,
+  108,105,103,104,116,32,78,117,109,98,101,114,32,83,101,108,101,99,116,111,
+  114,0 };
+  
+// this structure defines all the variables and events of your control interface 
+struct {
+
+    // input variables
+  uint8_t PushButton; // =1 if button pressed, else =0
+  uint8_t FlightNumber; // from 0 to 4
+  uint8_t Orientation; // from 0 to 2
+  uint8_t TeamNumber; // from 0 to 9
+
+    // output variables
+  char statusGui[16]; // string UTF8 end zero
+  float DataLoggerId;
+
+    // other variable
+  uint8_t connect_flag;  // =1 if wire connected, else =0
+
+} RemoteXY;   
+#pragma pack(pop)
+ 
+/////////////////////////////////////////////
+//           END RemoteXY include          //
+/////////////////////////////////////////////
+
+
+//Global parameters from gui
+int FLIGHT_NUMBER;
+int TEAM_NUMBER;
+int Orientation;
 
 // Voltage divider values
 const float R1 = 1786.0; // 1800Ohms 
@@ -169,7 +233,8 @@ void onESPReady();
 
 void setup() {
   Serial.begin(9600);    // USB serial for debug
-  
+  RemoteXY_Init (); 
+
   // Battery indication 
   pinMode(PIN_LED_RED, OUTPUT);
   pinMode(PIN_LED_GREEN, OUTPUT);
@@ -186,24 +251,24 @@ void setup() {
   // OLED Init
   u8g2.begin();
   displayTwoLines("OLED", "initialized!", u8g2_font_ncenB10_tr, 40, 25);
-  delay(2000);
+  RemoteXY_delay(2000);
 
   // IMU Init (Rev2)
   displayTwoLines("Initializing", "IMU...", u8g2_font_ncenB10_tr, 25, 45);
-  delay(2000);
+  RemoteXY_delay(2000);
   if (!IMU.begin()) {
     Serial.println("Failed to initialize IMU.");
     displayTwoLines("Failed to", "initialize IMU.", u8g2_font_ncenB10_tr, 35, 10);
     while (1);
   }
   
-  delay(2000);  // Remove once we make sure an ISR cant interrupt it.
+  RemoteXY_delay(2000);  // Remove once we make sure an ISR cant interrupt it.
   Serial.println("IMU initialized successfully!");
   displayTwoLines("IMU initialized", "successfully!", u8g2_font_ncenB10_tr, 10, 20);
-  delay(2000);
+  RemoteXY_delay(2000);
 
   displayTwoLines("Initializing", "BARO sensor...", u8g2_font_ncenB10_tr, 25, 10);
-  delay(2000);
+  RemoteXY_delay(2000);
   if (!BARO.begin()) {
     Serial.println("Failed to initialize pressure sensor.");
     displayTwoLines("Failed to initialize", "pressure sensor.", u8g2_font_6x10_tr, 5, 20);
@@ -211,17 +276,17 @@ void setup() {
   }
   Serial.println("BARO sensor initialized!");
   displayTwoLines("BARO sensor", "initialized!", u8g2_font_ncenB10_tr, 15, 25);
-  delay(2000);
+  RemoteXY_delay(2000);
 
   // Baro Init
   displayTwoLines("BARO sensor", "initialized!", u8g2_font_ncenB10_tr, 15, 25);
-  delay(2000);
+  RemoteXY_delay(2000);
 
 
   //============ ESP Initialisation  ================
   Serial.println("Waiting for ESP32 + SIM7600 to initialize...");
   displayTwoLines("Waiting for", "ESP32...", u8g2_font_ncenB10_tr, 40, 25);
-  delay(2000);
+  RemoteXY_delay(2000);
 
   pinMode(LED_PIN, OUTPUT);
   pinMode(READY_LINE, INPUT);
@@ -235,12 +300,12 @@ void setup() {
   while (!espReady) {
     Serial.println("ESP32 not ready. Retrying in 3s...");
     displayTwoLines("ESP32", "not ready...", u8g2_font_ncenB10_tr, 40, 25);
-    delay(3000);
+    RemoteXY_delay(3000);
   }
 
   Serial.println("✅ ESP32 is ready. Proceeding...");
   displayTwoLines("✅ ESP32 Ready", "Proceeding ...", u8g2_font_ncenB08_tr, 0, 12);
-  delay(2000);
+  RemoteXY_delay(2000);
   //============ ESP Initialisation End  ================
 
   // GPS module on Serial1 (D0 = RX, D1 = TX)
@@ -248,9 +313,9 @@ void setup() {
   displayTwoLines("Initializing", "GPS reader...", u8g2_font_ncenB10_tr, 25, 15);
   Serial1.begin(115200); 
   while (!Serial1);
-  delay(2000);
+  RemoteXY_delay(2000);
   displayTwoLines("GPS started", "successfully!", u8g2_font_ncenB10_tr, 21, 20);
-  delay(2000);
+  RemoteXY_delay(2000);
   // waiting to get the munimum gps sat count, max wait 30 sec
   waitForGPSLock();  // comment while debuging 
 
@@ -262,7 +327,7 @@ void setup() {
   }
   Serial.println("SD card initialized successfully!");
   displayTwoLines("SD card initialized", "successfully!", u8g2_font_6x10_tr, 8, 25);
-  delay(2000);
+  RemoteXY_delay(2000);
 
   updateGPSData();
   generateFilename();
@@ -270,7 +335,7 @@ void setup() {
   //============ IMU CALIBIRATION. =========//
   // Accelerometer & Gyroscope, stationary
   Serial.println("IMU Calibration 1 (Acc & Gyro): Press button");
-  displayTwoLines("IMU Calibration 1:", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+  displayTwoLines("IMU Off Calibration:", "Press button", u8g2_font_ncenB10_tr, 10, 20);
   waitForButtonPressed();
   Serial.println("Press, once again, to end calibation 1");
   displayTwoLines("End?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
@@ -292,14 +357,14 @@ void setup() {
 
   Serial.println("IMU calibration complete.");  
   displayTwoLines("IMU calibration", "complete.", u8g2_font_ncenB10_tr, 10, 20);
-  delay(2000);
+  RemoteXY_delay(2000);
   //============ IMU CALIBIRATION END. =========//
 
   displayTwoLines("Ready to", "start!", u8g2_font_ncenB10_tr, 35, 45);
-  delay(2000);
+  RemoteXY_delay(2000);
   
   displayToScreen("Team 1", 30, 35);
-  delay(2000);
+  RemoteXY_delay(2000);
 
   // Wait for button to start logging
   bool toggle = false;
@@ -368,7 +433,7 @@ void loop() {
     //printIMUOffsetsAndReadings();
     // displayToScreen();
     // readNextLineFromSD();
-    //delay(1000); // 1Hz logging rate will be removed later!
+    //RemoteXY_delay(1000); // 1Hz logging rate will be removed later!
     checkBattery();
     
     // UI rotation: team, battery, GPS, log state, ACK status
@@ -415,8 +480,8 @@ void loop() {
       }
     }
   }
-  // Optional: add a short delay to reduce CPU load if needed
- // delay(1000); // (uncomment if display flickers or CPU usage is high)
+  // Optional: add a short RemoteXY_delay to reduce CPU load if needed
+ // RemoteXY_delay(1000); // (uncomment if display flickers or CPU usage is high)
 }
 
 // === IMU Data Update ===
@@ -580,8 +645,10 @@ void onButtonPress() {
 }
 
 void waitForButtonPressed() {
-  while(!buttonInterruptFlag) {
-    yield();
+  while (!buttonInterruptFlag && (RemoteXY.PushButton != 1)) {
+    RemoteXY_Handler ();
+    updateGuiInfo();
+    RemoteXY_delay(5);
   }
   buttonInterruptFlag = false; 
 }
@@ -666,7 +733,7 @@ void startLog() {
       logState = LogState::IDLE;
     }
   }
-  delay(2000); // 2 sec to read the message! 
+  RemoteXY_delay(2000); // 2 sec to read the message! 
 }
 
 // === Deactivates data logging status ===
@@ -677,12 +744,12 @@ void stopLog(){
     //Serial.println("File closed");
     //Serial.println("Stopped data logging");
     displayTwoLines("File closed", "log Stopped!", u8g2_font_ncenB10_tr, 15, 40);
-    delay(2000);
+    RemoteXY_delay(2000);
 
   }else{
     //Serial.println("File wasn't open");
     displayTwoLines("Error", "File wasn't open!", u8g2_font_ncenB10_tr, 15, 40);
-    delay(2000);
+    RemoteXY_delay(2000);
 
   }
   logState = LogState::IDLE;
@@ -707,7 +774,7 @@ void generateFilename() {
  if (gps.date.isValid() && gps.time.isValid()) {
     Serial.print("Using GPS for session log ");
     displayTwoLines("Using GPS", "for session log", u8g2_font_ncenB10_tr, 10, 10);
-    delay(2000);
+    RemoteXY_delay(2000);
     
     // Format: T<team><day><month><hour>.CSV → 8 chars before .CSV T0119083.csv team 01 day 19 month 08, hour (3 or 13)
     snprintf(filename, sizeof(filename), "T%02d%02d%02d%01d.CSV",
@@ -719,21 +786,21 @@ void generateFilename() {
     Serial.println(filename);
     
     displayTwoLines("session_ID:", filename, u8g2_font_ncenB10_tr, 15, 15);
-    delay(2000);
+    RemoteXY_delay(2000);
 
   } else {
     Serial.println("No GPS time available!");
     displayTwoLines("No GPS time", "available!", u8g2_font_ncenB10_tr, 10, 10);
-    delay(2000);
+    RemoteXY_delay(2000);
 
     displayTwoLines("Using timeStamp", "for session log", u8g2_font_ncenB10_tr, 10, 10);
-    delay(2000);
+    RemoteXY_delay(2000);
     
     unsigned long ts = timestamp % 10000;
     snprintf(filename, sizeof(filename), "T%02d_%04lu.CSV", TEAM_NUMBER, ts);
 
     displayTwoLines("session_ID:", filename, u8g2_font_ncenB10_tr, 15, 15);
-    delay(2000);
+    RemoteXY_delay(2000);
     Serial.println(filename);
   }
 }
@@ -761,9 +828,9 @@ void waitForGPSLock() {
       break;  // Good GPS fix, break early
     }
 
-    delay(1000);  // Check every 1 second
+    RemoteXY_delay(1000);  // Check every 1 second
   }
-  delay(1000);  // Check every 1 second
+  RemoteXY_delay(1000);  // Check every 1 second
 
   if (!locked) {
     // Timeout reached without lock
@@ -775,11 +842,11 @@ void waitForGPSLock() {
     snprintf(errMsg2, sizeof(errMsg2), "Sats: %d/%d", SatCount, MIN_SATS_REQUIRED);
     displayTwoLines(errMsg1, errMsg2, u8g2_font_ncenB10_tr, 10, 30);
 
-    delay(3000); // Show error for 3 seconds before continuing
+    RemoteXY_delay(3000); // Show error for 3 seconds before continuing
   } else {
     Serial.println("GPS lock acquired!");
     displayTwoLines("GPS Lock", "acquired!", u8g2_font_ncenB10_tr, 30, 40);
-    delay(2000);
+    RemoteXY_delay(2000);
   }
 }
 
@@ -808,7 +875,7 @@ void calibrateIMU() {
     // Store the values 
     accXCalibBuffer[i] = accX;  accYCalibBuffer[i] = accY;  accZCalibBuffer[i] = accZ;  
     gyroXCalibBuffer[i] = gyroX; gyroYCalibBuffer[i] = gyroY;  gyroZCalibBuffer[i] = gyroZ; 
-    delay(11); // Accelerometer and gyrospcope output data rate is fixed at 99.84 Hz (10ms)
+    RemoteXY_delay(11); // Accelerometer and gyrospcope output data rate is fixed at 99.84 Hz (10ms)
   }
     
   // Bubble Sorting to find the Median (for each sensor)
@@ -880,10 +947,15 @@ void calibrateIMU2() {
 
   int j = 0;
   buttonInterruptFlag = false;
-  while(!buttonInterruptFlag && j < MAGNET_CALIB_SAMPLES) {
+  while((!buttonInterruptFlag && (RemoteXY.PushButton != 1)) && j < MAGNET_CALIB_SAMPLES) {
     while (!IMU.magneticFieldAvailable()) {
-      yield();
-    }
+      //yield();
+      RemoteXY_Handler ();
+      RemoteXY_delay(5);
+      RemoteXY.PushButton =;
+    }      
+    
+    RemoteXY_Handler ();
 
     IMU.readMagneticField(magX, magY, magZ);
 
@@ -988,7 +1060,7 @@ String modeToString() {
 // For real-time mode (pass a pre-bracketed JSON string like "[" + line + "]")
 // Will automatically create new node with filename if it doesn't already exist
 String buildJsonPayload(const String& jsonWrappedLine) {
-  return "{\"" + filename + "\": {\"mode\":\"" + modeToString() + "\",\"data\":" + jsonWrappedLine + "}}";
+  return "{\"mode\":\"" + modeToString() + "\",\"data\":" + jsonWrappedLine + "}";
 }
 
 
@@ -1005,7 +1077,7 @@ void sendToESP(const String& msg) {
       
       // Reset I2C
       WireESP.end();
-      delay(10);
+      RemoteXY_delay(10);
       WireESP.begin();
       espReady = true; // make it true to re try sending data over I2c to avoid total dead lock witout stoping the sd card being logging
     
@@ -1027,7 +1099,7 @@ void sendToESP(const String& msg) {
       //    displayTwoLines("I2C Error:", "Unknown code", u8g2_font_ncenB10_tr, 40, 25);
       //    break;
     //  }
-    //  delay(1000);  // Give the user time to see the message /////******===========================Must be commented in real time==================================*****************================///////
+    //  RemoteXY_delay(1000);  // Give the user time to see the message /////******===========================Must be commented in real time==================================*****************================///////
     }
   }
   else{
@@ -1119,4 +1191,11 @@ void attitudeAngles() {
 
     mediansReady = false;
   }
+}
+
+void updateGuiInfo(){
+FLIGHT_NUMBER = RemoteXY.FlightNumber;  // example
+TEAM_NUMBER   = RemoteXY.TeamNumber;
+Orientation  = RemoteXY.Orientation;
+RemoteXY.DataLoggerId = IDataLoggerId;
 }
