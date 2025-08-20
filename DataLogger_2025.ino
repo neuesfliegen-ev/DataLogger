@@ -7,6 +7,7 @@
 #include <TinyGPSPlus.h>
 #include <Arduino.h>
 #include <CircularBuffer.hpp>
+#include <Kalman.h> // Source: https://github.com/TKJElectronics/KalmanFilter
 
 // team number 
 #define IDataLoggerId 1
@@ -136,15 +137,14 @@ int SatCount = 0;
 float pressure, paltitude, temperature; 
 
 // === Attitude Angle Variables ===
+bool firstIteration = true;
+Kalman kalmanX, kalmanY, kalmanZ;
 float roll = 0, pitch = 0, yaw = 0;
-const int sizeArray = 8;
-float accXArray[sizeArray], accYArray[sizeArray], accZArray[sizeArray];
-float magXArray[sizeArray], magYArray[sizeArray], magZArray[sizeArray];
-float accXMedian, accYMedian, accZMedian;
-float magXMedian, magYMedian, magZMedian;
-bool mediansReady = false;
-int attitudeCounter = 0;
-constexpr float RAD2DEG = 57.2957795f;  // 180/pi
+double rollFinal, pitchFinal, yawFinal; // Calculated angle using a Kalman filter
+double gyroXangle, gyroYangle, gyroZangle; // Angle calculate using the gyro only
+double gyroXrate, gyroYrate, gyroZrate;
+double dt;
+unsigned long timer = 0;
 
 // === Display Variables ===
 unsigned long lastDisplaySwitch = 0; // Keep track of the last time the display was updated
@@ -205,10 +205,8 @@ void calibrateIMU();
 void calibrateIMU2();
 bool fullSpanCalibration(int16_t, int16_t, int16_t, int16_t, int16_t, int16_t);
 void printIMUOffsetsAndReadings();
+void attitudeInitialization();
 void attitudeAngles();
-void attitudeArrays();
-float median(float arr[], int n);
-void bubbleSort(float arr[], int n);
 void generateFilename(); 
 void readNextLineFromSD();
 
@@ -425,7 +423,7 @@ void loop() {
 
     updateLogging();
     updateIMUData();
-    attitudeArrays();
+    attitudeInitialization();
     attitudeAngles();
     updateBarometerData();
     updateGPSData();
@@ -670,9 +668,9 @@ String generateDataLine() {
   line += String(gpsAltitude) + ",";
   line += String(Speed) + ",";
   line += String(SatCount) + ",";
-//  line += String(roll) + ",";
-//  line += String(pitch) + ",";
-//  line += String(yaw) + ",";
+//  line += String(rollFinal) + ",";
+//  line += String(pitchFinal) + ",";
+//  line += String(yawFinal) + ",";
 //  line += String(pressure) + ",";
 //  line += String(temperature) + ",";
 //  line += String(paltitude); + ",";
@@ -952,7 +950,7 @@ void calibrateIMU2() {
       //yield();
       RemoteXY_Handler ();
       RemoteXY_delay(5);
-      RemoteXY.PushButton =;
+      RemoteXY.PushButton = 0;
     }      
     
     RemoteXY_Handler ();
@@ -1135,67 +1133,73 @@ void log() {
   logToServer(line);
 }
 
-void bubbleSort(float arr[], int n) {
-    for (int i = 0; i < n - 1; i++) {
-        for (int j = 0; j < n - i - 1; j++) {
-            if (arr[j] > arr[j + 1]) {
-                float temp = arr[j];
-                arr[j] = arr[j + 1];
-                arr[j + 1] = temp;
-            }
-        }
-    }
-}
-
-float median(float arr[], int n) {
-    // assume arr[] is already sorted
-    if (n % 2 == 0) {
-        int mid = n / 2;
-        return (arr[mid - 1] + arr[mid]) / 2.0f;
-    } else {
-        return arr[n / 2];
-    }
-}
-
-// This arrays of Acc & Mag are used for improved attitude calculations
-void attitudeArrays() {
-  accXArray[attitudeCounter] = accX; accYArray[attitudeCounter] = accY; accZArray[attitudeCounter] = accZ;
-  magXArray[attitudeCounter] = magX; magYArray[attitudeCounter] = magY; magZArray[attitudeCounter] = magZ;
-  attitudeCounter++;
-
-  if(attitudeCounter == sizeArray) { 
-    bubbleSort(accXArray, sizeArray); bubbleSort(accYArray, sizeArray); bubbleSort(accZArray, sizeArray);
-    bubbleSort(magXArray, sizeArray); bubbleSort(magYArray, sizeArray); bubbleSort(magZArray, sizeArray);
-
-    accXMedian = median(accXArray, sizeArray); accYMedian = median(accYArray, sizeArray); accZMedian = median(accZArray, sizeArray);
-    magXMedian = median(magXArray, sizeArray); magYMedian = median(magYArray, sizeArray); magZMedian = median(magZArray, sizeArray);
-
-    attitudeCounter = 0;
-    mediansReady = true;
-    }
-}
-
-void attitudeAngles() {
-  if (mediansReady) {
-    roll  = atan2f(accYMedian, accZMedian);
-    pitch = atan2f(-accXMedian, sqrtf(accYMedian*accYMedian + accZMedian*accZMedian));
-
-    // tilt-compensated mag
-    float mx_h = magXMedian * cosf(pitch) + magZMedian * sinf(pitch);
-    float my_h = magXMedian * sinf(roll) * sinf(pitch) + magYMedian * cosf(roll) - magZMedian * sinf(roll) * cosf(pitch);
-
-    yaw = atan2f(-my_h, mx_h);
-
-    // change from radians to degrees
-    roll  = roll * RAD2DEG;    pitch = pitch * RAD2DEG;    yaw = yaw * RAD2DEG;
-
-    mediansReady = false;
-  }
-}
-
 void updateGuiInfo(){
 FLIGHT_NUMBER = RemoteXY.FlightNumber;  // example
 TEAM_NUMBER   = RemoteXY.TeamNumber;
 Orientation  = RemoteXY.Orientation;
 RemoteXY.DataLoggerId = IDataLoggerId;
+}
+
+void attitudeInitialization() {
+  if (firstIteration) {
+    timer = millis();
+    roll  = atan2(accY, accZ) * RAD_TO_DEG;
+    pitch = atan(-accX / sqrt(accY * accY + accZ * accZ)) * RAD_TO_DEG;
+    
+    // tilt-compensated mag
+    float mx_h = magZ * cosf(pitch) + magZ * sinf(pitch);
+    float my_h = magX * sinf(roll) * sinf(pitch) + magY * cosf(roll) - magZ * sinf(roll) * cosf(pitch);
+
+    yaw = atan2f(-my_h, mx_h) * RAD_TO_DEG;
+
+    kalmanX.setAngle(roll); // Set starting angle
+    kalmanY.setAngle(pitch);
+    kalmanZ.setAngle(yaw);
+  
+    gyroXangle = roll;
+    gyroYangle = pitch;
+    gyroZangle = yaw;
+
+    firstIteration = false;
+  }
+}
+
+void attitudeAngles() {
+  dt = (double)(millis() - timer) / 1000;
+  roll  = -atan2(accY, accZ) * RAD_TO_DEG;
+  pitch = atan(accX / sqrt(accY * accY + accZ * accZ)) * RAD_TO_DEG;
+  
+  gyroXrate = -gyroX;
+  gyroYrate = -gyroY;
+  gyroZrate = gyroZ;
+
+  // This fixes the transition problem when the accelerometer angle jumps between -180 and 180 degrees
+  if ((roll < -90 && rollFinal > 90) || (roll > 90 && rollFinal < -90)) {
+    kalmanX.setAngle(roll);
+    rollFinal = roll;
+    gyroXangle = roll;
+  } else {rollFinal = kalmanX.getAngle(roll, gyroXrate, dt);} // Calculate the angle using a Kalman filter
+
+  if (abs(rollFinal) > 90) {gyroYrate = -gyroYrate;} // Invert rate, so it fits the restriced accelerometer reading
+
+  pitchFinal = kalmanY.getAngle(pitch, gyroYrate, dt);
+
+  // yaw: tilt-compensation
+  double tempRoll = rollFinal  * DEG_TO_RAD;
+  double tempPitch = pitchFinal * DEG_TO_RAD;
+  float mx_h = magX * cos(tempPitch) + magZ * sin(tempPitch);
+  float my_h = magX * sin(tempRoll) * sin(tempPitch) + magY * cos(tempRoll) - magZ * sin(tempRoll) * cos(tempPitch);
+  double yaw = atan2(-my_h, mx_h) * RAD_TO_DEG;
+  //
+
+  yawFinal = kalmanZ.getAngle(yaw, gyroZrate, dt);
+
+  gyroXangle += gyroXrate * dt; // Calculate gyro angle without any filter
+  gyroYangle += gyroYrate * dt;
+  gyroZangle += gyroZrate * dt;
+
+  // Reset the gyro angle when it has drifted too much
+  if (gyroXangle < -180 || gyroXangle > 180) {gyroXangle = rollFinal;}
+  if (gyroYangle < -180 || gyroYangle > 180) {gyroYangle = pitchFinal;}
+  if (gyroZangle < -180 || gyroZangle > 180) {gyroZangle = yawFinal;}
 }
