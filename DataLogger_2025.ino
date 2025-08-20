@@ -7,7 +7,7 @@
 #include <TinyGPSPlus.h>
 #include <Arduino.h>
 #include <CircularBuffer.hpp>
-#include <Kalman.h> // Source: https://github.com/TKJElectronics/KalmanFilter
+#include "Kalman.h" // Source: https://github.com/TKJElectronics/KalmanFilter
 
 // team number 
 #define IDataLoggerId 1
@@ -668,13 +668,14 @@ String generateDataLine() {
   line += String(gpsAltitude) + ",";
   line += String(Speed) + ",";
   line += String(SatCount) + ",";
+  line += String(battery1Voltage); // + ",";  
   line += String((int)rollFinal) + ",";
   line += String((int)pitchFinal) + ",";
   line += String((int)yawFinal) + ",";
+  line += String((int)paltitude) + ",";
+  line += String(TEAM_NUMBER) + "," + String(FLIGHT_NUMBER);
 //  line += String(pressure) + ",";
 //  line += String(temperature) + ",";
-  line += String((int)paltitude) + ",";
-  line += String(battery1Voltage); // + ",";  
 //  line += String(battery2Voltage);
   return line;
 }
@@ -1043,7 +1044,7 @@ String buildJsonPayload(const CircularBuffer<String, N>& buffer) {
     payload += buffer[i];
     if (i < buffer.size() - 1) payload += ",";
   }
-  payload = payload + "," + TEAM_NUMBER + "," + FLIGHT_NUMBER + "]}";
+  payload = payload + "]}";
   return payload;
 }
 
@@ -1059,7 +1060,7 @@ String modeToString() {
 // For real-time mode (pass a pre-bracketed JSON string like "[" + line + "]")
 // Will automatically create new node with filename if it doesn't already exist
 String buildJsonPayload(const String& jsonWrappedLine) {
-  return "{[" + jsonWrappedLine + "," + TEAM_NUMBER + "," + FLIGHT_NUMBER + "]}";
+  return "{[" + jsonWrappedLine + "]}";
 }
 
 
