@@ -2,7 +2,7 @@
 
 An interactive 3D flight path visualization tool that displays animated aircraft flight paths with real-time attitude data, G-force analysis, and speed visualization. [Example video is shot using "flight6.CSV"]
 
-![GIF](FlightDemo - Copy.gif)
+![GIF](FlightDemo-Copy.gif)
 
 ## Features
 
