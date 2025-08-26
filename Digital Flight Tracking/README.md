@@ -161,8 +161,8 @@ flight_viewer/
 python animated_3d_viewer.py
 
 # Run specific team flights
-python animated_3d_viewer.py Team6-Flight2.CSV
-python animated_3d_viewer.py NPU_Flight1.CSV
+python animated_3d_viewer.py flight6.CSV
+python animated_3d_viewer.py flight4.CSV
 
 # Run your own flight data
 python animated_3d_viewer.py my_flight_data.CSV
