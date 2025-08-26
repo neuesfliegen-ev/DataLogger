@@ -67,17 +67,12 @@ The following flight files are included:
 
 ```bash
 # Team flights
-python animated_3d_viewer.py ATA-Flight2.CSV      # Default - Team ATA
-python animated_3d_viewer.py Team6-Flight2.CSV    # Team 6 flight data
-python animated_3d_viewer.py flight6.CSV          # Alternative Team 6 data
-
-# NPU flights  
-python animated_3d_viewer.py NPU_Flight1.CSV      # NPU Flight 1
-python animated_3d_viewer.py NPUflight2.CSV       # NPU Flight 2
-
-# Other flights
-python animated_3d_viewer.py Helios_Flight1.CSV   # Helios team
-python animated_3d_viewer.py Hermes_flight2.CSV   # Hermes team
+python animated_3d_viewer.py flight1.CSV      # Default
+python animated_3d_viewer.py flight2.CSV
+python animated_3d_viewer.py flight3.CSV
+python animated_3d_viewer.py flight4.CSV
+python animated_3d_viewer.py flight5.CSV
+python animated_3d_viewer.py flight6.CSV
 ```
 
 ## Required CSV Format
@@ -149,12 +144,14 @@ flight_viewer/
 ├── animated_3d_viewer.py    # Main application
 ├── data_loader.py           # CSV/Excel file reading
 ├── requirements.txt         # Python dependencies
-├── README.md               # This documentation
-├── ATA-Flight2.CSV         # Default flight data
-├── Team6-Flight2.CSV       # Example flight files
-├── NPU_Flight1.CSV         # ...
-├── Helios_Flight1.CSV      # ...
-└── [other flight files]    # Additional examples
+├── README.md                # This documentation
+├── flight1.CSV              # Default flight data
+├── flight2.CSV              # Example flight files
+├── flight3.CSV              # ...
+├── flight4.CSV              # ...
+├── flight5.CSV              # ...
+├── flight6.CSV              # ...
+└── [other flight files]     # Additional examples
 ```
 
 ## Example Commands
