@@ -117,7 +117,7 @@ The OLED shows system status:
 
 ## 📷 License
 
-- currently internal private use only!
+- Not for Comercial Stuf
 
 ---
 
