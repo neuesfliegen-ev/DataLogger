@@ -941,17 +941,16 @@ void calibrateIMU2() {
   int16_t magnYCalibBuffer[MAGNET_CALIB_SAMPLES];
   int16_t magnZCalibBuffer[MAGNET_CALIB_SAMPLES]; // Only if Six-Axis Calibration method is used.
 
-  Serial.println("END Calibration? Press button");
-  displayTwoLines("END Calibration?", "Press button", u8g2_font_ncenB10_tr, 10, 20);
+  Serial.println("Wait 20s to END");
+  displayTwoLines("Wait 20s", "to END", u8g2_font_ncenB10_tr, 10, 20);
 
   int j = 0;
   buttonInterruptFlag = false;
-  while((!buttonInterruptFlag && (RemoteXY.PushButton != 1)) && j < MAGNET_CALIB_SAMPLES) {
+  while(!buttonInterruptFlag && j < 500) { // 500 ~= 20s
     while (!IMU.magneticFieldAvailable()) {
       //yield();
       RemoteXY_Handler ();
       RemoteXY_delay(5);
-      RemoteXY.PushButton = 0;
     }      
     
     RemoteXY_Handler ();
