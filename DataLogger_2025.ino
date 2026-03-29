@@ -653,7 +653,7 @@ void waitForButtonPressed() {
 
 String generateDataLine() {
   String line = "";
-  line += String(millis()) + ",";
+  line += String(now) + ",";
   line += String(accX) + ",";
   line += String(accY) + ",";
   line += String(accZ) + ",";
@@ -955,7 +955,9 @@ void calibrateIMU2() {
     }      
     
     RemoteXY_Handler ();
-
+    RemoteXY_delay(5);
+    RemoteXY.PushButton = 0;
+    
     IMU.readMagneticField(magX, magY, magZ);
 
     magnXCalibBuffer[j] = magX;  magnYCalibBuffer[j] = magY; magnZCalibBuffer[j] = magZ;
@@ -1039,14 +1041,15 @@ void onESPReady() {
 //this function  takes whatever arraylsit or line/ string and encapulste it in json format this funcion has an overwrite with differnt sig
 template <size_t N>
 String buildJsonPayload(const CircularBuffer<String, N>& buffer) {
-  String payload = "{[";
+  String payload = "{\"" + String(now) + "\":[";
   for (int i = 0; i < buffer.size(); i++) {
     payload += buffer[i];
     if (i < buffer.size() - 1) payload += ",";
   }
-  payload = payload + "]}";
+  payload += "]}";
   return payload;
 }
+
 
 // covert the curent mode to string to be used in the payload
 String modeToString() {
@@ -1060,7 +1063,7 @@ String modeToString() {
 // For real-time mode (pass a pre-bracketed JSON string like "[" + line + "]")
 // Will automatically create new node with filename if it doesn't already exist
 String buildJsonPayload(const String& jsonWrappedLine) {
-  return "{[" + jsonWrappedLine + "]}";
+  return "{\"" + String(now) + "\":[" + jsonWrappedLine + "]}";
 }
 
 
@@ -1136,8 +1139,8 @@ void log() {
 }
 
 void updateGuiInfo(){
-FLIGHT_NUMBER = RemoteXY.FlightNumber;  // example
-TEAM_NUMBER   = RemoteXY.TeamNumber;
+FLIGHT_NUMBER = RemoteXY.FlightNumber +1;  // example
+TEAM_NUMBER   = RemoteXY.TeamNumber + 1;
 Orientation  = RemoteXY.Orientation;
 RemoteXY.DataLoggerId = IDataLoggerId;
 }
