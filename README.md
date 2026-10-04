@@ -104,7 +104,6 @@ The OLED shows system status:
 - Add orientation calculation (roll, pitch, yaw)
 - Support logging at configurable rates (5Hz, 10Hz)
 - Add battery voltage and current sensors
-- Add SIM card for real time telemetry
 
 ---
 
@@ -113,11 +112,4 @@ The OLED shows system status:
 - Developed by **Neus Fliegen Avionics Team**
 - Based on libraries by Arduino, Adafruit, and Mikal Hart (TinyGPS++)
 
----
-
-## 📷 License
-
-- Not for Comercial Stuf
-
----
 
